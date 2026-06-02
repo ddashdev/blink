@@ -715,7 +715,24 @@ RunClosure("Server byte limit rejects oversized client buffers", function()
 	end)
 
 	local BeforeWarnings = #Warnings
-	Shared.Bridge:Fire("Client", "BLINK_RELIABLE_REMOTE", buffer.create(12001), {}, nil, nil, nil)
+	Shared.Bridge:Fire(
+		"Client",
+		"BLINK_RELIABLE_REMOTE",
+		buffer.create(99999),
+		{},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil
+	)
 	task.wait(1 / 30)
 	Disconnect()
 
@@ -724,7 +741,7 @@ RunClosure("Server byte limit rejects oversized client buffers", function()
 	end
 
 	local Warning = Warnings[BeforeWarnings + 1]
-	if not Warning or not string.find(Warning, "123456", 1, true) or not string.find(Warning, "12001", 1, true) then
+	if not Warning or not string.find(Warning, "123456", 1, true) or not string.find(Warning, "99999", 1, true) then
 		ErrorPrint(`Expected oversized buffer warning with user id and byte size, got {Format(Warning)}.`)
 	end
 end)

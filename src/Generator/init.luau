@@ -21,8 +21,8 @@ local Sources = {
 }
 
 local EVENTS_TYPE = "BLINK_EVENTS_SYMBOL"
-local DEFAULT_SERVER_BYTE_LIMIT = 10 * 1024
-local DEFAULT_REMOTE_TAMPER_NILS = 3
+local DEFAULT_SERVER_BYTE_LIMIT = 8 * 1024
+local DEFAULT_REMOTE_TAMPER_NILS = 12
 
 local DIRECTIVES = {
 	"--!strict\n",
@@ -68,22 +68,24 @@ local function ServerByteLimitBody(Reliability: string, Limit: number): { string
 end
 
 local REMOTE_TAMPER_BODY = {
-	"local RemoteTamperCallback: ((Player) -> ())? = nil\n",
+	'local RemoteTamperCallback: ((Player: Player, Channel: "Reliable" | "Unreliable", Args: { any }, Received: number, Expected: number) -> ())? = nil\n',
 	"\n",
-	"local function CheckRemoteTamper(Player: Player, Count: number, Nil1: any, Nil2: any, Nil3: any): boolean\n",
-	`\tif Count == {DEFAULT_REMOTE_TAMPER_NILS} and Nil1 == nil and Nil2 == nil and Nil3 == nil then\n`,
+	'local function CheckRemoteTamper(Player: Player, Channel: "Reliable" | "Unreliable", ...): boolean\n',
+	`\tlocal NilCount = select("#", ...)\n`,
+	"\tlocal Args = table.pack(...)\n",
+	`\tif NilCount == {DEFAULT_REMOTE_TAMPER_NILS} and #Args == 0 then\n`,
 	"\t\treturn true\n",
 	"\tend\n",
 	"\n",
 	"\tlocal Callback = RemoteTamperCallback\n",
 	"\tif Callback then\n",
-	"\t\ttask.spawn(Callback, Player)\n",
+	`\t\ttask.spawn(Callback, Player, Channel, Args, NilCount, {DEFAULT_REMOTE_TAMPER_NILS})\n`,
 	"\tend\n",
 	"\n",
 	"\treturn false\n",
 	"end\n",
 	"\n",
-	"local function OnRemoteTamperingDetected(Callback: (Player) -> ()): () -> ()\n",
+	'local function OnRemoteTamperingDetected(Callback: (Player: Player, Channel: "Reliable" | "Unreliable", Args: { any }, Received: number, Expected: number) -> ()): () -> ()\n',
 	"\tRemoteTamperCallback = Callback\n",
 	"\treturn function()\n",
 	"\t\tif RemoteTamperCallback == Callback then\n",
@@ -93,10 +95,14 @@ local REMOTE_TAMPER_BODY = {
 	"end\n",
 }
 
-local REMOTE_TAMPER_CHECK_BODY = {
-	'local Count = select("#", ...)\n',
-	"local Nil1, Nil2, Nil3 = ...\n",
-	"if not CheckRemoteTamper(Player, Count, Nil1, Nil2, Nil3) then\n",
+local RELIABLE_REMOTE_TAMPER_CHECK_BODY = {
+	'if not CheckRemoteTamper(Player, "Reliable", ...) then\n',
+	"\treturn\n",
+	"end\n",
+}
+
+local UNRELIABLE_REMOTE_TAMPER_CHECK_BODY = {
+	'if not CheckRemoteTamper(Player, "Unreliable", ...) then\n',
 	"\treturn\n",
 	"end\n",
 }
@@ -1278,8 +1284,8 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Unreliables = Blocks.Connection(`Unreliable.{Signal}`, Arguments)
 
 	if RemoteTamperCheck then
-		Reliables:Lines(REMOTE_TAMPER_CHECK_BODY, 1)
-		Unreliables:Lines(REMOTE_TAMPER_CHECK_BODY, 1)
+		Reliables:Lines(RELIABLE_REMOTE_TAMPER_CHECK_BODY, 1)
+		Unreliables:Lines(UNRELIABLE_REMOTE_TAMPER_CHECK_BODY, 1)
 	end
 
 	Reliables:Lines(EVENT_BODY, 1)
