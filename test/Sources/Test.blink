@@ -6,6 +6,7 @@ option ServerOutput = "../../Network/Server.luau"
 option SyncValidation = true
 option WriteValidations = true
 option ManualReplication = false
+option ServerByteLimit = 12000
 
 import "./Indexers"
 import "./Sub-Sources/Source"

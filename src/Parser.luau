@@ -87,6 +87,7 @@ export type Options = {
 	WriteValidations: boolean?,
 	ManualReplication: boolean?,
 	RemoteScope: string?,
+	ServerByteLimit: number?,
 }
 
 export type Body = Node<"Body", {
@@ -196,6 +197,7 @@ local OPTIONS: { [string]: Lexer.Types } = {
 	WriteValidations = "Boolean",
 	ManualReplication = "Boolean",
 	RemoteScope = "String",
+	ServerByteLimit = "Number",
 }
 
 local EVENT: { EventOption } = {
@@ -949,6 +951,12 @@ function Parser.Options(self: Parser): Options
 		end
 
 		local Value = self:Consume(Type)
+		if Name == "ServerByteLimit" and (not IsInteger(Value.Value) or Value.Value < 1) then
+			Error.new(Error.AnalyzeInvalidRange, self.Source, `Invalid ServerByteLimit`, self.File)
+				:Primary(Value, `"ServerByteLimit" must be a positive integer`)
+				:Emit()
+		end
+
 		Options[Name] = Value.Value
 	end
 

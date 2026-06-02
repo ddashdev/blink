@@ -24,7 +24,7 @@ local function PrettyPrint(Color: stdio.Color, Message: string, DontReturn: bool
 	stdio.write(`{stdio.color(Color)}{Message}{not DontReturn and "\n" or ""}{stdio.color("reset")}`)
 end
 
-if stdio.prompt("confirm" :: "confirm", "Compile files?") then
+if table.find(process.args, "--yes") or stdio.prompt("confirm" :: "confirm", "Compile files?") then
 	PrettyPrint("blue", "Clearing Network folder...")
 	if fs.isDir("../Network") then
 		fs.removeDir("../Network")
@@ -66,6 +66,11 @@ local function MockTypeof(a: any)
 	return TypeofA
 end
 
+local Warnings = {}
+local function MockWarn(Message: string)
+	table.insert(Warnings, Message)
+end
+
 local function MockRequire(Path: string, Environment)
 	local Source = fs.readFile(Path)
 	local Bytecode = luau.compile(Source, {
@@ -76,6 +81,7 @@ local function MockRequire(Path: string, Environment)
 	Environment._G = {}
 	Environment.task = task
 	Environment.typeof = MockTypeof
+	Environment.warn = MockWarn
 	Environment.require = function()
 		error("require is not supported")
 	end
@@ -673,6 +679,27 @@ FireAndExpect("Unreliable Client", Client.UnreliableClient, Server.UnreliableCli
 FireAndExpect("Empty Reliable Client", Client.ClientEmptyEvent, Server.ClientEmptyEvent, nil)
 FireAndExpect("Empty Unreliable Client", Client.ClientEmptyUnreliableEvent, Server.ClientEmptyUnreliableEvent, nil)
 
+RunClosure("Server byte limit rejects oversized client buffers", function()
+	local Called = false
+	local Disconnect = Server.ReliableClient.On(function()
+		Called = true
+	end)
+
+	local BeforeWarnings = #Warnings
+	Shared.Bridge:Fire("Client", "BLINK_RELIABLE_REMOTE", buffer.create(12001), {})
+	task.wait(1 / 30)
+	Disconnect()
+
+	if Called then
+		ErrorPrint("Expected oversized client buffer to be dropped before listener dispatch.")
+	end
+
+	local Warning = Warnings[BeforeWarnings + 1]
+	if not Warning or not string.find(Warning, "123456", 1, true) or not string.find(Warning, "12001", 1, true) then
+		ErrorPrint(`Expected oversized buffer warning with user id and byte size, got {Format(Warning)}.`)
+	end
+end)
+
 RunClosure("Server throttle client event", function()
 	local Results = {}
 	local Disconnect = Server.ThrottledClientEvent.On(function(Player, Value)
@@ -1082,6 +1109,19 @@ event InvalidServerThrottle {
 
 	if Success then
 		ErrorPrint("Expected ServerThrottle on a server event to fail.")
+	end
+end)
+
+RunClosure("ServerByteLimit rejects invalid values", function()
+	for _, Limit in { "0", "1.5" } do
+		local SourceParser = Parser.new()
+		local Success = pcall(function()
+			SourceParser:Parse(`option ServerByteLimit = {Limit}`)
+		end)
+
+		if Success then
+			ErrorPrint(`Expected ServerByteLimit = {Limit} to fail.`)
+		end
 	end
 end)
 

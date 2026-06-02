@@ -21,6 +21,7 @@ local Sources = {
 }
 
 local EVENTS_TYPE = "BLINK_EVENTS_SYMBOL"
+local DEFAULT_SERVER_BYTE_LIMIT = 10 * 1024
 local DIRECTIVES = {
 	"--!strict\n",
 	"--!native\n",
@@ -58,6 +59,15 @@ local EVENT_SYNC_VALIDATION = {
 local SERVER_THROTTLE_CLEANUP_DECLARATION = {
 	"local ClearServerThrottles: (Player) -> () = function(Player) end\n",
 }
+
+local function ServerByteLimitBody(Reliability: string, Limit: number): { string }
+	return {
+		`if Size > {Limit} then\n`,
+		`\twarn(\`[Blink]: Player \{Player.UserId} exceeded server byte limit on {Reliability} remote (\{Size} bytes > {Limit} bytes).\`)\n`,
+		"\treturn\n",
+		"end\n",
+	}
+end
 
 local SERVER_THROTTLE_BODY = {
 	"type ServerThrottleBucket = {\n",
@@ -1297,6 +1307,12 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 
 	Reliables:Lines(EVENT_BODY, 1)
 	Unreliables:Lines(EVENT_BODY, 1)
+
+	if Context == "Server" then
+		local ServerByteLimit = Options.ServerByteLimit or DEFAULT_SERVER_BYTE_LIMIT
+		Reliables:Lines(ServerByteLimitBody("Reliable", ServerByteLimit), 1)
+		Unreliables:Lines(ServerByteLimitBody("Unreliable", ServerByteLimit), 1)
+	end
 
 	if Options.SyncValidation then
 		Reliables:Lines(EVENT_SYNC_VALIDATION, 1)
