@@ -1314,7 +1314,7 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	local Replication = Builder.new()
 	if RemoteTamperCheck then
 		Noop.Push("OnRemoteTamperingDetected = function() return NOOP end,", 0, 1)
-		Return.Push("OnRemoteTamperingDetected = OnRemoteTamperingDetected,", 1, 1)
+		Return.Push("OnRemoteTamperingDetected = OnRemoteTamperingDetected,", 0, 1)
 	end
 	Return.Push(`{Casing.StepReplication} = StepReplication,`, 1, 1)
 
