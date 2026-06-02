@@ -315,6 +315,9 @@ return function(FileContext: Context, AbstractSyntaxTree: AbstractSyntaxTree): s
 	local StringBuilder = Builder.new()
 
 	StringBuilder.Push(VERSION_HEADER)
+	if FileContext == "Server" and Options.RemoteTamperCheck then
+		StringBuilder.Push(`export declare const OnRemoteTamperingDetected: (Callback: (Player: Player) => void) => (() => void)`)
+	end
 	StringBuilder.Push(`export declare const {Casing.StepReplication}: () => void`)
 
 	if _G.VERSION == nil then

@@ -6,6 +6,8 @@ option ServerOutput = "../../Network/Server.luau"
 option SyncValidation = true
 option WriteValidations = true
 option ManualReplication = false
+option ServerByteLimit = 12000
+option RemoteTamperCheck = true
 
 import "./Indexers"
 import "./Sub-Sources/Source"
@@ -225,6 +227,22 @@ event ClientEmptyEvent {
     From: Client,
     Type: Reliable,
     Call: SingleSync
+}
+
+event ThrottledClientEvent {
+    From: Client,
+    Type: Reliable,
+    Call: SingleSync,
+    ServerThrottle: 2,
+    Data: u8
+}
+
+event ThrottledClientPollEvent {
+    From: Client,
+    Type: Reliable,
+    Call: Polling,
+    ServerThrottle: 2,
+    Data: u8
 }
 
 event ClientEmptyUnreliableEvent {

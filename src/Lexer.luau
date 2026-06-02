@@ -117,6 +117,12 @@ local TOKENS = {
 	},
 
 	--> Complex patterns
+	{
+		`^{NUMBER}`,
+		function(Token: string)
+			return "Number", tonumber(Token)
+		end,
+	},
 	{ "^[%w_]+%.[%w_%.]+", "Identifier" },
 	{
 		"^[%a_][%w_]*",

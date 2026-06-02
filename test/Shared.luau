@@ -6,6 +6,9 @@ local Metatable = getmetatable(Player)
 Metatable.__tostring = function()
 	return "Player"
 end
+Metatable.__index = {
+	UserId = 123456,
+}
 
 local ServerOnlyInstance = (newproxy() :: any) :: Instance
 
