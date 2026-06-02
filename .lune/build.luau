@@ -14,7 +14,6 @@ local PLUGIN_RELEASE_DIR = `{RELEASE_DIR}/plugin`
 
 local CLI_PATH = "src/CLI/init.luau"
 local BUNDLE_PATH = `{RELEASE_DIR}/blink.luau`
-local PESDE_RELEASE_PATH = `{RELEASE_DIR}/blink_pesde.luau`
 
 local BUNDLE_CONFIG = "build/.darklua.json"
 local PLUGIN_ROJO_CONFIG = "build/plugin.project.json"
@@ -56,13 +55,6 @@ local function build_executable(platform: Platforms, arch: Archs)
 
 	fs.removeFile(exe_path)
 	log(`Built executable for {target}`)
-end
-
-local function build_pesde()
-	local darklua_result =
-		process.exec("darklua", { "process", "--config", BUNDLE_CONFIG, CLI_PATH, PESDE_RELEASE_PATH })
-	assert(darklua_result.ok, darklua_result.stderr)
-	log("Build pesde source")
 end
 
 local function build_executables()
@@ -117,7 +109,6 @@ do
 end
 
 local start = os.clock()
-build_pesde()
 build_executables()
 build_studio_plugin()
 
