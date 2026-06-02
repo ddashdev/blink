@@ -11,42 +11,40 @@ local function Clone(Source: buffer): buffer
 end
 
 local function Fire(Reliable: boolean, ...)
-	local Arguments = { ... }
-	local Buffer = #Arguments == 2 and Arguments[1] or Arguments[2]
-	local Instances = Arguments[#Arguments]
+	local Buffer, Instances = ...
 
 	Buffer = Clone(Buffer)
 	Instances = table.clone(Instances)
 
-	Shared.Bridge:Fire("Server", Reliable and "BLINK_RELIABLE_REMOTE" or "BLINK_UNRELIABLE_REMOTE", Buffer, Instances)
+	Shared.Bridge:Fire("Server", Reliable and "BLINK_RELIABLE_REMOTE" or "BLINK_UNRELIABLE_REMOTE", Buffer, Instances, select(3, ...))
 end
 
 ServerEnviornment.Instances.BLINK_RELIABLE_REMOTE = {
-	FireClient = function(self, Player, ...)
-		Fire(true, ...)
+	FireClient = function(self, Player, Buffer, Instances, ...)
+		Fire(true, Buffer, Instances, ...)
 	end,
-	FireAllClients = function(self, ...)
-		Fire(true, ...)
+	FireAllClients = function(self, Buffer, Instances, ...)
+		Fire(true, Buffer, Instances, ...)
 	end,
 	OnServerEvent = Signal.new(),
 }
 
 ServerEnviornment.Instances.BLINK_UNRELIABLE_REMOTE = {
-	FireClient = function(Player, ...)
-		Fire(false, ...)
+	FireClient = function(self, Player, Buffer, Instances, ...)
+		Fire(false, Buffer, Instances, ...)
 	end,
-	FireAllClients = function(self, ...)
-		Fire(false, ...)
+	FireAllClients = function(self, Buffer, Instances, ...)
+		Fire(false, Buffer, Instances, ...)
 	end,
 	OnServerEvent = Signal.new(),
 }
 
-Shared.Bridge:Connect(function(From: string, Remote: string, Buffer: buffer, Instances: { Instance })
+Shared.Bridge:Connect(function(From: string, Remote: string, Buffer: buffer, Instances: { Instance }, ...)
 	if From == "Server" then
 		return
 	end
 
-	ServerEnviornment.Instances[Remote].OnServerEvent:Fire(Shared.Player, Buffer, Instances)
+	ServerEnviornment.Instances[Remote].OnServerEvent:Fire(Shared.Player, Buffer, Instances, ...)
 end)
 
 return ServerEnviornment

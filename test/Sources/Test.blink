@@ -7,6 +7,7 @@ option SyncValidation = true
 option WriteValidations = true
 option ManualReplication = false
 option ServerByteLimit = 12000
+option RemoteTamperCheck = true
 
 import "./Indexers"
 import "./Sub-Sources/Source"

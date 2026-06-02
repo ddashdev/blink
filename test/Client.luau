@@ -11,14 +11,12 @@ local function Clone(Source: buffer): buffer
 end
 
 local function Fire(Reliable: boolean, ...)
-	local Arguments = { ... }
-	local Buffer = #Arguments == 2 and Arguments[1] or Arguments[2]
-	local Instances = Arguments[#Arguments]
+	local Buffer, Instances = ...
 
 	Buffer = Clone(Buffer)
 	Instances = table.clone(Instances)
 
-	Shared.Bridge:Fire("Client", Reliable and "BLINK_RELIABLE_REMOTE" or "BLINK_UNRELIABLE_REMOTE", Buffer, Instances)
+	Shared.Bridge:Fire("Client", Reliable and "BLINK_RELIABLE_REMOTE" or "BLINK_UNRELIABLE_REMOTE", Buffer, Instances, select(3, ...))
 end
 
 ClientEnviornment.Instances.BLINK_RELIABLE_REMOTE = {
@@ -35,7 +33,7 @@ ClientEnviornment.Instances.BLINK_UNRELIABLE_REMOTE = {
 	OnClientEvent = Signal.new(),
 }
 
-Shared.Bridge:Connect(function(From: string, Remote: string, Buffer: buffer, Instances: { Instance })
+Shared.Bridge:Connect(function(From: string, Remote: string, Buffer: buffer, Instances: { Instance }, ...)
 	if From == "Client" then
 		return
 	end
@@ -46,7 +44,7 @@ Shared.Bridge:Connect(function(From: string, Remote: string, Buffer: buffer, Ins
 		end
 	end
 
-	ClientEnviornment.Instances[Remote].OnClientEvent:Fire(Buffer, Instances)
+	ClientEnviornment.Instances[Remote].OnClientEvent:Fire(Buffer, Instances, ...)
 end)
 
 return ClientEnviornment

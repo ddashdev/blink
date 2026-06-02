@@ -88,6 +88,7 @@ export type Options = {
 	ManualReplication: boolean?,
 	RemoteScope: string?,
 	ServerByteLimit: number?,
+	RemoteTamperCheck: boolean?,
 }
 
 export type Body = Node<"Body", {
@@ -198,6 +199,7 @@ local OPTIONS: { [string]: Lexer.Types } = {
 	ManualReplication = "Boolean",
 	RemoteScope = "String",
 	ServerByteLimit = "Number",
+	RemoteTamperCheck = "Boolean",
 }
 
 local EVENT: { EventOption } = {

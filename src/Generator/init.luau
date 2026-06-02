@@ -22,6 +22,7 @@ local Sources = {
 
 local EVENTS_TYPE = "BLINK_EVENTS_SYMBOL"
 local DEFAULT_SERVER_BYTE_LIMIT = 10 * 1024
+local DEFAULT_REMOTE_TAMPER_NILS = 3
 local DIRECTIVES = {
 	"--!strict\n",
 	"--!native\n",
@@ -67,6 +68,48 @@ local function ServerByteLimitBody(Reliability: string, Limit: number): { string
 		"\treturn\n",
 		"end\n",
 	}
+end
+
+local REMOTE_TAMPER_BODY = {
+	"local RemoteTamperCallback: ((Player) -> ())? = nil\n",
+	"\n",
+	"local function CheckRemoteTamper(Player: Player, Count: number, Nil1: any, Nil2: any, Nil3: any): boolean\n",
+	`\tif Count == {DEFAULT_REMOTE_TAMPER_NILS} and Nil1 == nil and Nil2 == nil and Nil3 == nil then\n`,
+	"\t\treturn true\n",
+	"\tend\n",
+	"\n",
+	"\tlocal Callback = RemoteTamperCallback\n",
+	"\tif Callback then\n",
+	"\t\ttask.spawn(Callback, Player)\n",
+	"\tend\n",
+	"\n",
+	"\treturn false\n",
+	"end\n",
+	"\n",
+	"local function OnRemoteTamperingDetected(Callback: (Player) -> ()): () -> ()\n",
+	"\tRemoteTamperCallback = Callback\n",
+	"\treturn function()\n",
+	"\t\tif RemoteTamperCallback == Callback then\n",
+	"\t\t\tRemoteTamperCallback = nil\n",
+	"\t\tend\n",
+	"\tend\n",
+	"end\n",
+}
+
+local REMOTE_TAMPER_CHECK_BODY = {
+	"local Count = select(\"#\", ...)\n",
+	"local Nil1, Nil2, Nil3 = ...\n",
+	"if not CheckRemoteTamper(Player, Count, Nil1, Nil2, Nil3) then\n",
+	"\treturn\n",
+	"end\n",
+}
+
+local function FireServerArguments(Options: Parser.Options): string
+	if Options.RemoteTamperCheck then
+		return `Buffer, SendInstances{string.rep(", nil", DEFAULT_REMOTE_TAMPER_NILS)}`
+	end
+
+	return "Buffer, SendInstances"
 end
 
 local SERVER_THROTTLE_BODY = {
@@ -589,7 +632,7 @@ function Declarations.Event(Declaration: Parser.Event)
 			Fire:Line(WriteEvent)
 			Fire:Line("local Buffer = buffer.create(SendCursor)")
 			Fire:Line("buffer.copy(Buffer, 0, SendBuffer, 0, SendCursor)")
-			Fire:Line("Unreliable:FireServer(Buffer, SendInstances)")
+			Fire:Line(`Unreliable:FireServer({FireServerArguments(Options)})`)
 			Fire:Line("Load(Previous)")
 		end
 		Fire:End()
@@ -1300,10 +1343,18 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 
 	--> Setup remote events
 	local Signal = Context == "Client" and "OnClientEvent" or "OnServerEvent"
-	local Arguments = (Context == "Server" and "Player: Player, " or "") .. "Buffer: buffer, Instances: {Instance}"
+	local RemoteTamperCheck = Context == "Server" and Options.RemoteTamperCheck == true
+	local Arguments = if RemoteTamperCheck
+		then "Player: Player, Buffer: buffer, Instances: {Instance}, ..."
+		else (Context == "Server" and "Player: Player, " or "") .. "Buffer: buffer, Instances: {Instance}"
 
 	Reliables = Blocks.Connection(`Reliable.{Signal}`, Arguments)
 	Unreliables = Blocks.Connection(`Unreliable.{Signal}`, Arguments)
+
+	if RemoteTamperCheck then
+		Reliables:Lines(REMOTE_TAMPER_CHECK_BODY, 1)
+		Unreliables:Lines(REMOTE_TAMPER_CHECK_BODY, 1)
+	end
 
 	Reliables:Lines(EVENT_BODY, 1)
 	Unreliables:Lines(EVENT_BODY, 1)
@@ -1335,6 +1386,10 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 
 	--> Replication
 	local Replication = Builder.new()
+	if RemoteTamperCheck then
+		Noop.Push("OnRemoteTamperingDetected = function() return NOOP end,", 0, 1)
+		Return.Push("OnRemoteTamperingDetected = OnRemoteTamperingDetected,", 1, 1)
+	end
 	Return.Push(`{Casing.StepReplication} = StepReplication,`, 1, 1)
 
 	if not Options.ManualReplication then
@@ -1346,6 +1401,14 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 
 	--> Generate context source
 	local Source = Sources[Context]
+	local SourceEnd = Source[2]
+	if Context == "Client" and Options.RemoteTamperCheck then
+		SourceEnd = string.gsub(
+			SourceEnd,
+			"Reliable:FireServer%(Buffer, SendInstances%)",
+			`Reliable:FireServer({FireServerArguments(Options)})`
+		)
+	end
 
 	if Channels.Reliable.Listening then
 		Reliables = Reliables:End()
@@ -1387,13 +1450,14 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 		{ `local BASE_EVENT_NAME = "{Options.RemoteScope and Options.RemoteScope .. "_" or ""}BLINK"\n` },
 		string.split(Sources.Base, "\r"),
 		(if Options.SyncValidation then SYNC_VALIDATION_BODY else {}),
+		(if RemoteTamperCheck then REMOTE_TAMPER_BODY else {}),
 		(if Context == "Server" then SERVER_THROTTLE_CLEANUP_DECLARATION else {}),
 		(if HasServerThrottles then SERVER_THROTTLE_BODY else {}),
 		Events.DumpLines(),
 		LuauTypes.DumpLines(),
 		UserTypes.DumpLines(),
 		Noop.DumpLines(),
-		string.split(Source[2], "\r"),
+		string.split(SourceEnd, "\r"),
 		Replication.DumpLines(),
 		Reliables.Content,
 		Unreliables.Content,

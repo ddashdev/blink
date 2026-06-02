@@ -679,6 +679,35 @@ FireAndExpect("Unreliable Client", Client.UnreliableClient, Server.UnreliableCli
 FireAndExpect("Empty Reliable Client", Client.ClientEmptyEvent, Server.ClientEmptyEvent, nil)
 FireAndExpect("Empty Unreliable Client", Client.ClientEmptyUnreliableEvent, Server.ClientEmptyUnreliableEvent, nil)
 
+RunClosure("Remote tamper check rejects malformed client calls", function()
+	local Detected = {}
+	local DisconnectTamper = Server.OnRemoteTamperingDetected(function(Player)
+		table.insert(Detected, Player)
+	end)
+
+	local Called = false
+	local Disconnect = Server.ReliableClient.On(function()
+		Called = true
+	end)
+
+	Shared.Bridge:Fire("Client", "BLINK_RELIABLE_REMOTE", buffer.create(0), {})
+	task.wait(1 / 30)
+
+	Shared.Bridge:Fire("Client", "BLINK_RELIABLE_REMOTE", buffer.create(0), {}, 1, 2, 3)
+	task.wait(1 / 30)
+
+	Disconnect()
+	DisconnectTamper()
+
+	if Called then
+		ErrorPrint("Expected malformed client buffers to be dropped before listener dispatch.")
+	end
+
+	if #Detected ~= 2 or tostring(Detected[1]) ~= "Player" or tostring(Detected[2]) ~= "Player" then
+		ErrorPrint(`Expected two remote tamper detections for Player, got {Format(Detected)}.`)
+	end
+end)
+
 RunClosure("Server byte limit rejects oversized client buffers", function()
 	local Called = false
 	local Disconnect = Server.ReliableClient.On(function()
@@ -686,7 +715,7 @@ RunClosure("Server byte limit rejects oversized client buffers", function()
 	end)
 
 	local BeforeWarnings = #Warnings
-	Shared.Bridge:Fire("Client", "BLINK_RELIABLE_REMOTE", buffer.create(12001), {})
+	Shared.Bridge:Fire("Client", "BLINK_RELIABLE_REMOTE", buffer.create(12001), {}, nil, nil, nil)
 	task.wait(1 / 30)
 	Disconnect()
 
