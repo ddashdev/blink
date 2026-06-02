@@ -163,17 +163,11 @@ export type Tuple = Node<"Tuple", {
 	Values: { TypeNode },
 } & Attributes, AttributesTokens>
 
-export type RateLimit = {
-	Capacity: number,
-	ResetSeconds: number,
-}
-
 export type Event = Node<"Event", {
 	From: "Client" | "Server",
 	Type: "Reliable" | "Unreliable",
 	Call: "SingleSync" | "SingleAsync" | "ManySync" | "ManyAsync" | "Polling",
 	Data: (TypeNode | Tuple)?,
-	RateLimit: RateLimit?,
 }, {}>
 
 export type Function = Node<"Function", {
@@ -213,12 +207,6 @@ local EVENT: { EventOption } = {
 	{ Key = "Call", Type = "Identifier", Values = { "SingleSync", "SingleAsync", "ManySync", "ManyAsync", "Polling" } },
 	{ Key = "Poll", Type = "Boolean", Values = { true, false }, Optional = true },
 	{ Key = "Data", Type = "Identifier", Values = {}, Optional = true },
-	{ Key = "RateLimit", Type = "OpenBraces", Values = {}, Optional = true },
-}
-
-local RATE_LIMIT: { EventOption } = {
-	{ Key = "Capacity", Type = "Number", Values = {} },
-	{ Key = "ResetSeconds", Type = "Number", Values = {} },
 }
 
 local FUNCTION: { EventOption } = {
@@ -1109,72 +1097,6 @@ function Parser.GetOptionFromToken(self: Parser, Token: Token, Structure: { Even
 	)
 end
 
-function Parser.RateLimit(self: Parser): RateLimit
-	local Fields: { [string]: number } = {}
-	local Open, Close: Lexer.Token? = self:Consume("OpenBraces"), nil
-
-	while true do
-		Close = self:TryConsume("CloseBraces")
-		if Close then
-			break
-		end
-
-		local Field = self:ConsumeText()
-		local Option = self:GetOptionFromToken(Field, RATE_LIMIT)
-		self:Consume("FieldAssign")
-
-		if Fields[Option.Key] ~= nil then
-			Error.new(Error.AnalyzeDuplicateField, self.Source, `Field "{Option.Key}" was already specified`, self.File)
-				:Primary(Field, `Already specified earlier in the structure`)
-				:Emit()
-		end
-
-		local Token = self:Consume("Number")
-		local Value = Token.Value
-
-		if Option.Key == "Capacity" and (not IsInteger(Value) or Value < 1) then
-			Error.new(Error.AnalyzeInvalidRange, self.Source, `Invalid RateLimit`, self.File)
-				:Primary(Field, `"Capacity" must be a positive integer`)
-				:Emit()
-		end
-
-		if Option.Key == "ResetSeconds" and Value <= 0 then
-			Error.new(Error.AnalyzeInvalidRange, self.Source, `Invalid RateLimit`, self.File)
-				:Primary(Field, `"ResetSeconds" must be a positive number`)
-				:Emit()
-		end
-
-		Fields[Option.Key] = Value
-		Close = self:TryConsume("CloseBraces")
-
-		if Close then
-			break
-		end
-
-		self:Consume("Comma")
-	end
-
-	for _, Option in RATE_LIMIT do
-		if Fields[Option.Key] ~= nil then
-			continue
-		end
-
-		local Span: Error.Span = {
-			End = math.max((Close :: Lexer.Token).End - 2, Open.Start),
-			Start = Open.Start,
-		}
-
-		Error.new(Error.ParserExpectedExtraToken, self.Source, `Field "{Option.Key}" is missing`, self.File)
-			:Primary(Span, `Add missing field "{Option.Key}"`)
-			:Emit()
-	end
-
-	return {
-		Capacity = Fields.Capacity,
-		ResetSeconds = Fields.ResetSeconds,
-	}
-end
-
 function Parser.Structure(self: Parser, Name: Token, Structure: { EventOption }): { [string]: any }
 	local Fields: { [string]: any } = {}
 	local Open, Close: Lexer.Token? = self:Consume("OpenBraces"), nil
@@ -1198,9 +1120,7 @@ function Parser.Structure(self: Parser, Name: Token, Structure: { EventOption })
 		end
 
 		--> Parse non data/return field
-		if Option.Key == "RateLimit" then
-			Value = self:RateLimit()
-		elseif Option.Key ~= "Data" and Option.Key ~= "Return" then
+		if Option.Key ~= "Data" and Option.Key ~= "Return" then
 			local Token = self:Consume(Option.Type)
 			Value = Token.Value
 
@@ -1253,15 +1173,6 @@ function Parser.Event(self: Parser, Name: Token): Event
 		Call = "Polling"
 	end
 
-	local RateLimit: RateLimit? = Structure.RateLimit
-	if RateLimit then
-		if Structure.From ~= "Client" then
-			Error.new(Error.AnalyzeInvalidRange, self.Source, `Invalid RateLimit`, self.File)
-				:Primary(Name, `"RateLimit" can only be used on events sent from Client`)
-				:Emit()
-		end
-	end
-
 	return {
 		Type = "Event",
 		Name = Name.Value,
@@ -1270,7 +1181,6 @@ function Parser.Event(self: Parser, Name: Token): Event
 			Type = Structure.Type,
 			Call = Call,
 			Data = Structure.Data,
-			RateLimit = RateLimit,
 		},
 		Tokens = {},
 	}

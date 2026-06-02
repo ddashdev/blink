@@ -23,10 +23,7 @@ local Sources = {
 local EVENTS_TYPE = "BLINK_EVENTS_SYMBOL"
 local DEFAULT_SERVER_BYTE_LIMIT = 10 * 1024
 local DEFAULT_REMOTE_TAMPER_NILS = 3
-local DEFAULT_RATE_LIMIT = {
-	Capacity = 20,
-	ResetSeconds = 0.33,
-}
+
 local DIRECTIVES = {
 	"--!strict\n",
 	"--!native\n",
@@ -59,10 +56,6 @@ local EVENT_SYNC_VALIDATION = {
 	"\tcoroutine.close(SerdesThread)\n",
 	"end\n",
 	"SerdesThread = coroutine.running()\n",
-}
-
-local RATE_LIMIT_CLEANUP_DECLARATION = {
-	"local ClearRateLimits: (Player) -> () = function(Player) end\n",
 }
 
 local function ServerByteLimitBody(Reliability: string, Limit: number): { string }
@@ -116,48 +109,6 @@ local function FireServerArguments(Options: Parser.Options): string
 	return "Buffer, SendInstances"
 end
 
-local RATE_LIMIT_BODY = {
-	"type RateLimitBucket = {\n",
-	"\tCount: number,\n",
-	"\tStarted: number\n",
-	"}\n",
-	"\n",
-	"type RateLimit = {\n",
-	"\tCapacity: number,\n",
-	"\tResetSeconds: number,\n",
-	"\tPlayers: {[Player]: RateLimitBucket}\n",
-	"}\n",
-	"\n",
-	"local RateLimits: any = {\n",
-	"\tReliable = table.create(256),\n",
-	"\tUnreliable = table.create(256)\n",
-	"}\n",
-	"\n",
-	"ClearRateLimits = function(Player: Player)\n",
-	"\tfor _, Channel in RateLimits do\n",
-	"\t\tfor _, Limit in Channel do\n",
-	"\t\t\tLimit.Players[Player] = nil\n",
-	"\t\tend\n",
-	"\tend\n",
-	"end\n",
-	"\n",
-	"local function CheckRateLimit(Limit: RateLimit?, Player: Player): boolean\n",
-	"\tif Limit == nil then\n",
-	"\t\treturn true\n",
-	"\tend\n",
-	"\n",
-	"\tlocal Now = os.clock()\n",
-	"\tlocal Bucket = Limit.Players[Player]\n",
-	"\tif Bucket == nil or Now - Bucket.Started >= Limit.ResetSeconds then\n",
-	"\t\tLimit.Players[Player] = { Count = 1, Started = Now }\n",
-	"\t\treturn true\n",
-	"\tend\n",
-	"\n",
-	"\tBucket.Count += 1\n",
-	"\treturn Bucket.Count <= Limit.Capacity\n",
-	"end\n",
-}
-
 local RELIABLE_BODY = {
 	Header = "local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances",
 	Body = {
@@ -195,7 +146,6 @@ local Reliables: Blocks.Block
 local Unreliables: Blocks.Block
 local Return: Builder.Builder
 local Options: Parser.Options
-local HasRateLimits: boolean
 
 local Generators = {}
 local Declarations = {}
@@ -427,10 +377,6 @@ function Declarations.Event(Declaration: Parser.Event)
 	local IsUnreliable = (Reliability == "Unreliable")
 	local IsPolling = (Value.Call == "Polling" or Options.UsePolling)
 	local IsSameContext = Value.From == Context
-	local RateLimitConfig: Parser.RateLimit? = if Context == "Server" and Value.From == "Client"
-		then Value.RateLimit or DEFAULT_RATE_LIMIT
-		else nil
-	local IsRateLimit = RateLimitConfig ~= nil
 
 	local Block = IsUnreliable and Unreliables or Reliables
 	local Channel = IsUnreliable and Channels.Unreliable or Channels.Reliable
@@ -438,14 +384,6 @@ function Declarations.Event(Declaration: Parser.Event)
 	local Index = Channel.Count
 	local Queue = `Queue.{Reliability}[{Index}]`
 	local Connection = `Events.{Reliability}[{Index}]`
-	local RateLimit = `RateLimits.{Reliability}[{Index}]`
-
-	if RateLimitConfig then
-		HasRateLimits = true
-		Events.Push(
-			`{RateLimit} = \{ Capacity = {RateLimitConfig.Capacity}, ResetSeconds = {RateLimitConfig.ResetSeconds}, Players = \{\} \}`
-		)
-	end
 
 	--> Data body
 	local Types, Values, Arguments, _ = "nil", "Value: nil", "Value", nil
@@ -510,9 +448,6 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 
 		Block:Line(`local {Values} = {Util.GetPath(Identifier, false, Scope)}()`)
-		local DispatchBlock = if IsRateLimit
-			then Block:Compare(`CheckRateLimit({RateLimit}, Player)`, "true", "Equals")
-			else Block
 
 		local Disconnect = Blocks.Function("", "", "()")
 		if IsSingle then
@@ -527,12 +462,11 @@ function Declarations.Event(Declaration: Parser.Event)
 		if IsReliable then
 			local ListenerBound: Blocks.Block
 			if IsSingle then
-				ListenerBound = DispatchBlock:Compare(Connection, "nil", "Not")
-					:Lines(CallListener.Content, DispatchBlock.Indent)
+				ListenerBound = Block:Compare(Connection, "nil", "Not"):Lines(CallListener.Content, Block.Indent)
 			else
-				ListenerBound = DispatchBlock:Compare(`#{Connection}`, "0", "Greater")
+				ListenerBound = Block:Compare(`#{Connection}`, "0", "Greater")
 					:Iterator("_", "Listener", Connection)
-					:Lines(CallListener.Content, DispatchBlock.Indent + 1)
+					:Lines(CallListener.Content, Block.Indent + 1)
 					:End()
 			end
 
@@ -555,21 +489,15 @@ function Declarations.Event(Declaration: Parser.Event)
 				:End()
 		else
 			if IsSingle then
-				DispatchBlock:Compare(Connection, "nil", "Not"):Lines(CallListener.Content, DispatchBlock.Indent):End()
+				Block:Compare(Connection, "nil", "Not"):Lines(CallListener.Content, Block.Indent):End()
 			else
-				DispatchBlock:Iterator("_", "Listener", Connection)
-					:Lines(CallListener.Content, DispatchBlock.Indent)
-					:End()
+				Block:Iterator("_", "Listener", Connection):Lines(CallListener.Content, Block.Indent):End()
 			end
 
 			Listener = Blocks.Function(Casing.On, ContextArguments, `() -> ()`, true)
 				:Line(IsSingle and `{Connection} = Listener` or `table.insert({Connection}, Listener)`)
 				:Lines(Disconnect.Content, 1)
 				:End()
-		end
-
-		if IsRateLimit then
-			DispatchBlock:End()
 		end
 
 		Noop.Push(`{Casing.On} = NOOP`, 0, Indent + 1)
@@ -586,20 +514,9 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 
 		Channel.Listening = true
-		if IsRateLimit then
-			Block:Line(`local {Values} = {Util.GetPath(Identifier, false, Scope)}()`)
-			Block:Compare(`CheckRateLimit({RateLimit}, Player)`, "true", "Equals")
-				:Line(`Push({Queue}, table.pack(Player, {Arguments}))`)
-				:End()
-		else
-			Block:Line(
-				`Push({Queue}, table.pack({Context == "Server" and "Player, " or ""}{Util.GetPath(
-					Identifier,
-					false,
-					Scope
-				)}()))`
-			)
-		end
+		Block:Line(
+			`Push({Queue}, table.pack({Context == "Server" and "Player, " or ""}{Util.GetPath(Identifier, false, Scope)}()))`
+		)
 
 		local IterTypes = `number, {Context == "Server" and "Player, " or ""}{Types}`
 
@@ -1335,7 +1252,6 @@ function Generator.Reset()
 	Channels.Unreliable.Count = 0
 	Channels.Reliable.Listening = false
 	Channels.Unreliable.Listening = false
-	HasRateLimits = false
 end
 
 function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Body): string
@@ -1461,8 +1377,6 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 		string.split(Sources.Base, "\r"),
 		(if Options.SyncValidation then SYNC_VALIDATION_BODY else {}),
 		(if RemoteTamperCheck then REMOTE_TAMPER_BODY else {}),
-		(if Context == "Server" then RATE_LIMIT_CLEANUP_DECLARATION else {}),
-		(if HasRateLimits then RATE_LIMIT_BODY else {}),
 		Events.DumpLines(),
 		LuauTypes.DumpLines(),
 		UserTypes.DumpLines(),
