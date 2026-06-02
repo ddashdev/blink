@@ -168,7 +168,6 @@ export type Event = Node<"Event", {
 	Type: "Reliable" | "Unreliable",
 	Call: "SingleSync" | "SingleAsync" | "ManySync" | "ManyAsync" | "Polling",
 	Data: (TypeNode | Tuple)?,
-	ServerThrottle: number?,
 }, {}>
 
 export type Function = Node<"Function", {
@@ -208,7 +207,6 @@ local EVENT: { EventOption } = {
 	{ Key = "Call", Type = "Identifier", Values = { "SingleSync", "SingleAsync", "ManySync", "ManyAsync", "Polling" } },
 	{ Key = "Poll", Type = "Boolean", Values = { true, false }, Optional = true },
 	{ Key = "Data", Type = "Identifier", Values = {}, Optional = true },
-	{ Key = "ServerThrottle", Type = "Number", Values = {}, Optional = true },
 }
 
 local FUNCTION: { EventOption } = {
@@ -1175,21 +1173,6 @@ function Parser.Event(self: Parser, Name: Token): Event
 		Call = "Polling"
 	end
 
-	local ServerThrottle: number? = Structure.ServerThrottle
-	if ServerThrottle then
-		if Structure.From ~= "Client" then
-			Error.new(Error.AnalyzeInvalidRange, self.Source, `Invalid ServerThrottle`, self.File)
-				:Primary(Name, `"ServerThrottle" can only be used on events sent from Client`)
-				:Emit()
-		end
-
-		if not IsInteger(ServerThrottle) or ServerThrottle < 1 then
-			Error.new(Error.AnalyzeInvalidRange, self.Source, `Invalid ServerThrottle`, self.File)
-				:Primary(Name, `"ServerThrottle" must be a positive integer`)
-				:Emit()
-		end
-	end
-
 	return {
 		Type = "Event",
 		Name = Name.Value,
@@ -1198,7 +1181,6 @@ function Parser.Event(self: Parser, Name: Token): Event
 			Type = Structure.Type,
 			Call = Call,
 			Data = Structure.Data,
-			ServerThrottle = ServerThrottle,
 		},
 		Tokens = {},
 	}
