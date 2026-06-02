@@ -229,19 +229,32 @@ event ClientEmptyEvent {
     Call: SingleSync
 }
 
-event ThrottledClientEvent {
+event RateLimitedClientEvent {
     From: Client,
     Type: Reliable,
     Call: SingleSync,
-    ServerThrottle: 2,
+    RateLimit: {
+        Capacity: 2,
+        ResetSeconds: 1
+    },
     Data: u8
 }
 
-event ThrottledClientPollEvent {
+event RateLimitedClientPollEvent {
     From: Client,
     Type: Reliable,
     Call: Polling,
-    ServerThrottle: 2,
+    RateLimit: {
+        Capacity: 2,
+        ResetSeconds: 1
+    },
+    Data: u8
+}
+
+event DefaultRateLimitedClientEvent {
+    From: Client,
+    Type: Reliable,
+    Call: SingleSync,
     Data: u8
 }
 

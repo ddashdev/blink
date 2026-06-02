@@ -729,9 +729,9 @@ RunClosure("Server byte limit rejects oversized client buffers", function()
 	end
 end)
 
-RunClosure("Server throttle client event", function()
+RunClosure("Server rate limit client event", function()
 	local Results = {}
-	local Disconnect = Server.ThrottledClientEvent.On(function(Player, Value)
+	local Disconnect = Server.RateLimitedClientEvent.On(function(Player, Value)
 		if tostring(Player) ~= "Player" then
 			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
 		end
@@ -740,52 +740,52 @@ RunClosure("Server throttle client event", function()
 	end)
 
 	for Value = 1, 3 do
-		Client.ThrottledClientEvent.Fire(Value)
+		Client.RateLimitedClientEvent.Fire(Value)
 	end
 
 	task.wait(1 / 30)
 
 	if #Results ~= 2 or Results[1] ~= 1 or Results[2] ~= 2 then
-		ErrorPrint(`Expected throttled event to recieve 1, 2; got {Format(Results)}.`)
+		ErrorPrint(`Expected rate limited event to recieve 1, 2; got {Format(Results)}.`)
 	end
 
 	task.wait(1.05)
-	Client.ThrottledClientEvent.Fire(4)
+	Client.RateLimitedClientEvent.Fire(4)
 	task.wait(1 / 30)
 
 	if #Results ~= 3 or Results[3] ~= 4 then
-		ErrorPrint(`Expected throttled event to reset after one second; got {Format(Results)}.`)
+		ErrorPrint(`Expected rate limited event to reset after one second; got {Format(Results)}.`)
 	end
 
-	Client.ThrottledClientEvent.Fire(5)
-	Client.ThrottledClientEvent.Fire(6)
+	Client.RateLimitedClientEvent.Fire(5)
+	Client.RateLimitedClientEvent.Fire(6)
 	task.wait(1 / 30)
 
 	if #Results ~= 4 or Results[4] ~= 5 then
-		ErrorPrint(`Expected throttled event to drop before cleanup; got {Format(Results)}.`)
+		ErrorPrint(`Expected rate limited event to drop before cleanup; got {Format(Results)}.`)
 	end
 
 	ServerEnvironment.game:GetService("Players").PlayerRemoving:Fire(Shared.Player)
-	Client.ThrottledClientEvent.Fire(7)
+	Client.RateLimitedClientEvent.Fire(7)
 	task.wait(1 / 30)
 
 	if #Results ~= 5 or Results[5] ~= 7 then
-		ErrorPrint(`Expected player removal to clear server throttle bucket; got {Format(Results)}.`)
+		ErrorPrint(`Expected player removal to clear rate limit bucket; got {Format(Results)}.`)
 	end
 
 	Disconnect()
 end)
 
-RunClosure("Server throttle client polling event", function()
+RunClosure("Server rate limit client polling event", function()
 	local Results = {}
 
 	for Value = 1, 3 do
-		Client.ThrottledClientPollEvent.Fire(Value)
+		Client.RateLimitedClientPollEvent.Fire(Value)
 	end
 
 	task.wait(1 / 30)
 
-	for Index, Player, Value in Server.ThrottledClientPollEvent.Iter() do
+	for Index, Player, Value in Server.RateLimitedClientPollEvent.Iter() do
 		if tostring(Player) ~= "Player" then
 			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
 		end
@@ -794,15 +794,15 @@ RunClosure("Server throttle client polling event", function()
 	end
 
 	if #Results ~= 2 or Results[1] ~= 1 or Results[2] ~= 2 then
-		ErrorPrint(`Expected throttled polling event to recieve 1, 2; got {Format(Results)}.`)
+		ErrorPrint(`Expected rate limited polling event to recieve 1, 2; got {Format(Results)}.`)
 	end
 
 	task.wait(1.05)
-	Client.ThrottledClientPollEvent.Fire(4)
+	Client.RateLimitedClientPollEvent.Fire(4)
 	task.wait(1 / 30)
 
 	local AfterReset = {}
-	for Index, Player, Value in Server.ThrottledClientPollEvent.Iter() do
+	for Index, Player, Value in Server.RateLimitedClientPollEvent.Iter() do
 		if tostring(Player) ~= "Player" then
 			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
 		end
@@ -811,8 +811,31 @@ RunClosure("Server throttle client polling event", function()
 	end
 
 	if #AfterReset ~= 1 or AfterReset[1] ~= 4 then
-		ErrorPrint(`Expected throttled polling event to reset after one second; got {Format(AfterReset)}.`)
+		ErrorPrint(`Expected rate limited polling event to reset after one second; got {Format(AfterReset)}.`)
 	end
+end)
+
+RunClosure("Default server rate limit client event", function()
+	local Results = {}
+	local Disconnect = Server.DefaultRateLimitedClientEvent.On(function(Player, Value)
+		if tostring(Player) ~= "Player" then
+			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
+		end
+
+		table.insert(Results, Value)
+	end)
+
+	for Value = 1, 21 do
+		Client.DefaultRateLimitedClientEvent.Fire(Value)
+	end
+
+	task.wait(1 / 30)
+
+	if #Results ~= 20 or Results[1] ~= 1 or Results[20] ~= 20 then
+		ErrorPrint(`Expected default rate limited event to recieve 1..20; got {Format(Results)}.`)
+	end
+
+	Disconnect()
 end)
 
 FireManyAndExpectMany("Many Reliable Sync Server", 8, Server.ManyReliableSync, Client.ManyReliableSync, 1)
@@ -1123,21 +1146,53 @@ RunClosure("CLI compile --yes", function()
 	assert(Result.ok, Result.stderr)
 end)
 
-RunClosure("ServerThrottle rejects server events", function()
+RunClosure("RateLimit rejects server events", function()
 	local SourceParser = Parser.new()
 	local Success = pcall(function()
 		SourceParser:Parse([[
-event InvalidServerThrottle {
+event InvalidRateLimit {
 	From: Server,
 	Type: Reliable,
 	Call: SingleSync,
-	ServerThrottle: 1
+	RateLimit: {
+		Capacity: 1,
+		ResetSeconds: 1
+	}
 }
 ]])
 	end)
 
 	if Success then
-		ErrorPrint("Expected ServerThrottle on a server event to fail.")
+		ErrorPrint("Expected RateLimit on a server event to fail.")
+	end
+end)
+
+RunClosure("RateLimit rejects invalid values", function()
+	for _, RateLimit in
+		{
+			"Capacity: 0,\n\t\tResetSeconds: 1",
+			"Capacity: 1.5,\n\t\tResetSeconds: 1",
+			"Capacity: 1,\n\t\tResetSeconds: 0",
+			"Capacity: 1",
+		}
+	do
+		local SourceParser = Parser.new()
+		local Success = pcall(function()
+			SourceParser:Parse([[
+event InvalidRateLimit {
+	From: Client,
+	Type: Reliable,
+	Call: SingleSync,
+	RateLimit: {
+]] .. RateLimit .. [[
+	}
+}
+]])
+		end)
+
+		if Success then
+			ErrorPrint(`Expected invalid RateLimit to fail: {RateLimit}`)
+		end
 	end
 end)
 

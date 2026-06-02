@@ -23,6 +23,10 @@ local Sources = {
 local EVENTS_TYPE = "BLINK_EVENTS_SYMBOL"
 local DEFAULT_SERVER_BYTE_LIMIT = 10 * 1024
 local DEFAULT_REMOTE_TAMPER_NILS = 3
+local DEFAULT_RATE_LIMIT = {
+	Capacity = 20,
+	ResetSeconds = 0.33,
+}
 local DIRECTIVES = {
 	"--!strict\n",
 	"--!native\n",
@@ -57,8 +61,8 @@ local EVENT_SYNC_VALIDATION = {
 	"SerdesThread = coroutine.running()\n",
 }
 
-local SERVER_THROTTLE_CLEANUP_DECLARATION = {
-	"local ClearServerThrottles: (Player) -> () = function(Player) end\n",
+local RATE_LIMIT_CLEANUP_DECLARATION = {
+	"local ClearRateLimits: (Player) -> () = function(Player) end\n",
 }
 
 local function ServerByteLimitBody(Reliability: string, Limit: number): { string }
@@ -97,7 +101,7 @@ local REMOTE_TAMPER_BODY = {
 }
 
 local REMOTE_TAMPER_CHECK_BODY = {
-	"local Count = select(\"#\", ...)\n",
+	'local Count = select("#", ...)\n',
 	"local Nil1, Nil2, Nil3 = ...\n",
 	"if not CheckRemoteTamper(Player, Count, Nil1, Nil2, Nil3) then\n",
 	"\treturn\n",
@@ -112,44 +116,45 @@ local function FireServerArguments(Options: Parser.Options): string
 	return "Buffer, SendInstances"
 end
 
-local SERVER_THROTTLE_BODY = {
-	"type ServerThrottleBucket = {\n",
+local RATE_LIMIT_BODY = {
+	"type RateLimitBucket = {\n",
 	"\tCount: number,\n",
 	"\tStarted: number\n",
 	"}\n",
 	"\n",
-	"type ServerThrottle = {\n",
-	"\tLimit: number,\n",
-	"\tPlayers: {[Player]: ServerThrottleBucket}\n",
+	"type RateLimit = {\n",
+	"\tCapacity: number,\n",
+	"\tResetSeconds: number,\n",
+	"\tPlayers: {[Player]: RateLimitBucket}\n",
 	"}\n",
 	"\n",
-	"local ServerThrottles: any = {\n",
+	"local RateLimits: any = {\n",
 	"\tReliable = table.create(256),\n",
 	"\tUnreliable = table.create(256)\n",
 	"}\n",
 	"\n",
-	"ClearServerThrottles = function(Player: Player)\n",
-	"\tfor _, Channel in ServerThrottles do\n",
-	"\t\tfor _, Throttle in Channel do\n",
-	"\t\t\tThrottle.Players[Player] = nil\n",
+	"ClearRateLimits = function(Player: Player)\n",
+	"\tfor _, Channel in RateLimits do\n",
+	"\t\tfor _, Limit in Channel do\n",
+	"\t\t\tLimit.Players[Player] = nil\n",
 	"\t\tend\n",
 	"\tend\n",
 	"end\n",
 	"\n",
-	"local function CheckServerThrottle(Throttle: ServerThrottle?, Player: Player): boolean\n",
-	"\tif Throttle == nil then\n",
+	"local function CheckRateLimit(Limit: RateLimit?, Player: Player): boolean\n",
+	"\tif Limit == nil then\n",
 	"\t\treturn true\n",
 	"\tend\n",
 	"\n",
 	"\tlocal Now = os.clock()\n",
-	"\tlocal Bucket = Throttle.Players[Player]\n",
-	"\tif Bucket == nil or Now - Bucket.Started >= 1 then\n",
-	"\t\tThrottle.Players[Player] = { Count = 1, Started = Now }\n",
+	"\tlocal Bucket = Limit.Players[Player]\n",
+	"\tif Bucket == nil or Now - Bucket.Started >= Limit.ResetSeconds then\n",
+	"\t\tLimit.Players[Player] = { Count = 1, Started = Now }\n",
 	"\t\treturn true\n",
 	"\tend\n",
 	"\n",
 	"\tBucket.Count += 1\n",
-	"\treturn Bucket.Count <= Throttle.Limit\n",
+	"\treturn Bucket.Count <= Limit.Capacity\n",
 	"end\n",
 }
 
@@ -190,7 +195,7 @@ local Reliables: Blocks.Block
 local Unreliables: Blocks.Block
 local Return: Builder.Builder
 local Options: Parser.Options
-local HasServerThrottles: boolean
+local HasRateLimits: boolean
 
 local Generators = {}
 local Declarations = {}
@@ -422,7 +427,10 @@ function Declarations.Event(Declaration: Parser.Event)
 	local IsUnreliable = (Reliability == "Unreliable")
 	local IsPolling = (Value.Call == "Polling" or Options.UsePolling)
 	local IsSameContext = Value.From == Context
-	local IsServerThrottle = Context == "Server" and Value.From == "Client" and Value.ServerThrottle ~= nil
+	local RateLimitConfig: Parser.RateLimit? = if Context == "Server" and Value.From == "Client"
+		then Value.RateLimit or DEFAULT_RATE_LIMIT
+		else nil
+	local IsRateLimit = RateLimitConfig ~= nil
 
 	local Block = IsUnreliable and Unreliables or Reliables
 	local Channel = IsUnreliable and Channels.Unreliable or Channels.Reliable
@@ -430,11 +438,13 @@ function Declarations.Event(Declaration: Parser.Event)
 	local Index = Channel.Count
 	local Queue = `Queue.{Reliability}[{Index}]`
 	local Connection = `Events.{Reliability}[{Index}]`
-	local Throttle = `ServerThrottles.{Reliability}[{Index}]`
+	local RateLimit = `RateLimits.{Reliability}[{Index}]`
 
-	if IsServerThrottle then
-		HasServerThrottles = true
-		Events.Push(`{Throttle} = \{ Limit = {Value.ServerThrottle}, Players = \{\} \}`)
+	if RateLimitConfig then
+		HasRateLimits = true
+		Events.Push(
+			`{RateLimit} = \{ Capacity = {RateLimitConfig.Capacity}, ResetSeconds = {RateLimitConfig.ResetSeconds}, Players = \{\} \}`
+		)
 	end
 
 	--> Data body
@@ -500,8 +510,8 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 
 		Block:Line(`local {Values} = {Util.GetPath(Identifier, false, Scope)}()`)
-		local DispatchBlock = if IsServerThrottle
-			then Block:Compare(`CheckServerThrottle({Throttle}, Player)`, "true", "Equals")
+		local DispatchBlock = if IsRateLimit
+			then Block:Compare(`CheckRateLimit({RateLimit}, Player)`, "true", "Equals")
 			else Block
 
 		local Disconnect = Blocks.Function("", "", "()")
@@ -558,7 +568,7 @@ function Declarations.Event(Declaration: Parser.Event)
 				:End()
 		end
 
-		if IsServerThrottle then
+		if IsRateLimit then
 			DispatchBlock:End()
 		end
 
@@ -576,9 +586,9 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 
 		Channel.Listening = true
-		if IsServerThrottle then
+		if IsRateLimit then
 			Block:Line(`local {Values} = {Util.GetPath(Identifier, false, Scope)}()`)
-			Block:Compare(`CheckServerThrottle({Throttle}, Player)`, "true", "Equals")
+			Block:Compare(`CheckRateLimit({RateLimit}, Player)`, "true", "Equals")
 				:Line(`Push({Queue}, table.pack(Player, {Arguments}))`)
 				:End()
 		else
@@ -1325,7 +1335,7 @@ function Generator.Reset()
 	Channels.Unreliable.Count = 0
 	Channels.Reliable.Listening = false
 	Channels.Unreliable.Listening = false
-	HasServerThrottles = false
+	HasRateLimits = false
 end
 
 function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Body): string
@@ -1451,8 +1461,8 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 		string.split(Sources.Base, "\r"),
 		(if Options.SyncValidation then SYNC_VALIDATION_BODY else {}),
 		(if RemoteTamperCheck then REMOTE_TAMPER_BODY else {}),
-		(if Context == "Server" then SERVER_THROTTLE_CLEANUP_DECLARATION else {}),
-		(if HasServerThrottles then SERVER_THROTTLE_BODY else {}),
+		(if Context == "Server" then RATE_LIMIT_CLEANUP_DECLARATION else {}),
+		(if HasRateLimits then RATE_LIMIT_BODY else {}),
 		Events.DumpLines(),
 		LuauTypes.DumpLines(),
 		UserTypes.DumpLines(),
