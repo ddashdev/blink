@@ -27,6 +27,7 @@ local PlayersMap: {[Player]: BufferSave} = {}
 
 Players.PlayerRemoving:Connect(function(Player)
     PlayersMap[Player] = nil
+    ClearServerThrottles(Player)
 end)
 
 local function StepReplication()

@@ -1,4 +1,5 @@
 local Format = require("../src/Modules/Format")
+local Parser = require("../src/Parser")
 local fs = require("@lune/fs")
 local luau = require("@lune/luau")
 local process = require("@lune/process")
@@ -672,6 +673,92 @@ FireAndExpect("Unreliable Client", Client.UnreliableClient, Server.UnreliableCli
 FireAndExpect("Empty Reliable Client", Client.ClientEmptyEvent, Server.ClientEmptyEvent, nil)
 FireAndExpect("Empty Unreliable Client", Client.ClientEmptyUnreliableEvent, Server.ClientEmptyUnreliableEvent, nil)
 
+RunClosure("Server throttle client event", function()
+	local Results = {}
+	local Disconnect = Server.ThrottledClientEvent.On(function(Player, Value)
+		if tostring(Player) ~= "Player" then
+			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
+		end
+
+		table.insert(Results, Value)
+	end)
+
+	for Value = 1, 3 do
+		Client.ThrottledClientEvent.Fire(Value)
+	end
+
+	task.wait(1 / 30)
+
+	if #Results ~= 2 or Results[1] ~= 1 or Results[2] ~= 2 then
+		ErrorPrint(`Expected throttled event to recieve 1, 2; got {Format(Results)}.`)
+	end
+
+	task.wait(1.05)
+	Client.ThrottledClientEvent.Fire(4)
+	task.wait(1 / 30)
+
+	if #Results ~= 3 or Results[3] ~= 4 then
+		ErrorPrint(`Expected throttled event to reset after one second; got {Format(Results)}.`)
+	end
+
+	Client.ThrottledClientEvent.Fire(5)
+	Client.ThrottledClientEvent.Fire(6)
+	task.wait(1 / 30)
+
+	if #Results ~= 4 or Results[4] ~= 5 then
+		ErrorPrint(`Expected throttled event to drop before cleanup; got {Format(Results)}.`)
+	end
+
+	ServerEnvironment.game:GetService("Players").PlayerRemoving:Fire(Shared.Player)
+	Client.ThrottledClientEvent.Fire(7)
+	task.wait(1 / 30)
+
+	if #Results ~= 5 or Results[5] ~= 7 then
+		ErrorPrint(`Expected player removal to clear server throttle bucket; got {Format(Results)}.`)
+	end
+
+	Disconnect()
+end)
+
+RunClosure("Server throttle client polling event", function()
+	local Results = {}
+
+	for Value = 1, 3 do
+		Client.ThrottledClientPollEvent.Fire(Value)
+	end
+
+	task.wait(1 / 30)
+
+	for Index, Player, Value in Server.ThrottledClientPollEvent.Iter() do
+		if tostring(Player) ~= "Player" then
+			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
+		end
+
+		table.insert(Results, Value)
+	end
+
+	if #Results ~= 2 or Results[1] ~= 1 or Results[2] ~= 2 then
+		ErrorPrint(`Expected throttled polling event to recieve 1, 2; got {Format(Results)}.`)
+	end
+
+	task.wait(1.05)
+	Client.ThrottledClientPollEvent.Fire(4)
+	task.wait(1 / 30)
+
+	local AfterReset = {}
+	for Index, Player, Value in Server.ThrottledClientPollEvent.Iter() do
+		if tostring(Player) ~= "Player" then
+			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
+		end
+
+		table.insert(AfterReset, Value)
+	end
+
+	if #AfterReset ~= 1 or AfterReset[1] ~= 4 then
+		ErrorPrint(`Expected throttled polling event to reset after one second; got {Format(AfterReset)}.`)
+	end
+end)
+
 FireManyAndExpectMany("Many Reliable Sync Server", 8, Server.ManyReliableSync, Client.ManyReliableSync, 1)
 FireManyAndExpectMany("Many Reliable Async Server", 8, Server.ManyReliableAsync, Client.ManyReliableAsync, 1)
 FireManyAndExpectMany("Many Unreliable Sync Server", 8, Server.ManyUnreliableSync, Client.ManyUnreliableSync, 1)
@@ -978,6 +1065,24 @@ end)
 RunClosure("CLI compile --yes", function()
 	local Result = process.exec("lune", { "run", Compiler, COMPILE_TEST_FILE, "--", "--yes" }, { cwd = "../src/CLI" })
 	assert(Result.ok, Result.stderr)
+end)
+
+RunClosure("ServerThrottle rejects server events", function()
+	local SourceParser = Parser.new()
+	local Success = pcall(function()
+		SourceParser:Parse([[
+event InvalidServerThrottle {
+	From: Server,
+	Type: Reliable,
+	Call: SingleSync,
+	ServerThrottle: 1
+}
+]])
+	end)
+
+	if Success then
+		ErrorPrint("Expected ServerThrottle on a server event to fail.")
+	end
 end)
 
 local MergeStruct: Server.MergeStruct = {
