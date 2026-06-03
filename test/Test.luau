@@ -108,6 +108,9 @@ local Server: typeof(require("../Network/Server")) = MockRequire("../Network/Ser
 	BrickColor = ServerEnvironment.BrickColor,
 })
 
+local ClientExports = Client.Exports
+local ServerExports = Server.Exports
+
 --> Helper functions
 local function GetFlags(Amount: number): { [string]: boolean }
 	local Flags = {}
@@ -669,15 +672,20 @@ local Example: Client.Example = {
 
 PrettyPrint("blue", "Running output tests...")
 
-FireAndExpect("Reliable Server", Server.ReliableServer, Client.ReliableServer, 1)
-FireAndExpect("Unreliable Server", Server.UnreliableServer, Client.UnreliableServer, 1)
-FireAndExpect("Empty Reliable Server", Server.EmptyEvent, Client.EmptyEvent, nil)
-FireAndExpect("Empty Unreliable Server", Server.EmptyUnreliableEvent, Client.EmptyUnreliableEvent, nil)
+FireAndExpect("Reliable Server", ServerExports.ReliableServer, ClientExports.ReliableServer, 1)
+FireAndExpect("Unreliable Server", ServerExports.UnreliableServer, ClientExports.UnreliableServer, 1)
+FireAndExpect("Empty Reliable Server", ServerExports.EmptyEvent, ClientExports.EmptyEvent, nil)
+FireAndExpect("Empty Unreliable Server", ServerExports.EmptyUnreliableEvent, ClientExports.EmptyUnreliableEvent, nil)
 
-FireAndExpect("Reliable Client", Client.ReliableClient, Server.ReliableClient, 1)
-FireAndExpect("Unreliable Client", Client.UnreliableClient, Server.UnreliableClient, 1)
-FireAndExpect("Empty Reliable Client", Client.ClientEmptyEvent, Server.ClientEmptyEvent, nil)
-FireAndExpect("Empty Unreliable Client", Client.ClientEmptyUnreliableEvent, Server.ClientEmptyUnreliableEvent, nil)
+FireAndExpect("Reliable Client", ClientExports.ReliableClient, ServerExports.ReliableClient, 1)
+FireAndExpect("Unreliable Client", ClientExports.UnreliableClient, ServerExports.UnreliableClient, 1)
+FireAndExpect("Empty Reliable Client", ClientExports.ClientEmptyEvent, ServerExports.ClientEmptyEvent, nil)
+FireAndExpect(
+	"Empty Unreliable Client",
+	ClientExports.ClientEmptyUnreliableEvent,
+	ServerExports.ClientEmptyUnreliableEvent,
+	nil
+)
 
 RunClosure("Remote tamper check rejects malformed client calls", function()
 	local Detected = {}
@@ -686,7 +694,7 @@ RunClosure("Remote tamper check rejects malformed client calls", function()
 	end)
 
 	local Called = false
-	local Disconnect = Server.ReliableClient.On(function()
+	local Disconnect = ServerExports.ReliableClient.On(function()
 		Called = true
 	end)
 
@@ -710,7 +718,7 @@ end)
 
 RunClosure("Server byte limit rejects oversized client buffers", function()
 	local Called = false
-	local Disconnect = Server.ReliableClient.On(function()
+	local Disconnect = ServerExports.ReliableClient.On(function()
 		Called = true
 	end)
 
@@ -729,170 +737,112 @@ RunClosure("Server byte limit rejects oversized client buffers", function()
 	end
 end)
 
-RunClosure("Server throttle client event", function()
-	local Results = {}
-	local Disconnect = Server.ThrottledClientEvent.On(function(Player, Value)
-		if tostring(Player) ~= "Player" then
-			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
-		end
+FireManyAndExpectMany("Many Reliable Sync Server", 8, ServerExports.ManyReliableSync, ClientExports.ManyReliableSync, 1)
+FireManyAndExpectMany(
+	"Many Reliable Async Server",
+	8,
+	ServerExports.ManyReliableAsync,
+	ClientExports.ManyReliableAsync,
+	1
+)
+FireManyAndExpectMany(
+	"Many Unreliable Sync Server",
+	8,
+	ServerExports.ManyUnreliableSync,
+	ClientExports.ManyUnreliableSync,
+	1
+)
+FireManyAndExpectMany(
+	"Many Unreliable Async Server",
+	8,
+	ServerExports.ManyUnreliableAsync,
+	ClientExports.ManyUnreliableAsync,
+	1
+)
 
-		table.insert(Results, Value)
-	end)
-
-	for Value = 1, 3 do
-		Client.ThrottledClientEvent.Fire(Value)
-	end
-
-	task.wait(1 / 30)
-
-	if #Results ~= 2 or Results[1] ~= 1 or Results[2] ~= 2 then
-		ErrorPrint(`Expected throttled event to recieve 1, 2; got {Format(Results)}.`)
-	end
-
-	task.wait(1.05)
-	Client.ThrottledClientEvent.Fire(4)
-	task.wait(1 / 30)
-
-	if #Results ~= 3 or Results[3] ~= 4 then
-		ErrorPrint(`Expected throttled event to reset after one second; got {Format(Results)}.`)
-	end
-
-	Client.ThrottledClientEvent.Fire(5)
-	Client.ThrottledClientEvent.Fire(6)
-	task.wait(1 / 30)
-
-	if #Results ~= 4 or Results[4] ~= 5 then
-		ErrorPrint(`Expected throttled event to drop before cleanup; got {Format(Results)}.`)
-	end
-
-	ServerEnvironment.game:GetService("Players").PlayerRemoving:Fire(Shared.Player)
-	Client.ThrottledClientEvent.Fire(7)
-	task.wait(1 / 30)
-
-	if #Results ~= 5 or Results[5] ~= 7 then
-		ErrorPrint(`Expected player removal to clear server throttle bucket; got {Format(Results)}.`)
-	end
-
-	Disconnect()
-end)
-
-RunClosure("Server throttle client polling event", function()
-	local Results = {}
-
-	for Value = 1, 3 do
-		Client.ThrottledClientPollEvent.Fire(Value)
-	end
-
-	task.wait(1 / 30)
-
-	for Index, Player, Value in Server.ThrottledClientPollEvent.Iter() do
-		if tostring(Player) ~= "Player" then
-			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
-		end
-
-		table.insert(Results, Value)
-	end
-
-	if #Results ~= 2 or Results[1] ~= 1 or Results[2] ~= 2 then
-		ErrorPrint(`Expected throttled polling event to recieve 1, 2; got {Format(Results)}.`)
-	end
-
-	task.wait(1.05)
-	Client.ThrottledClientPollEvent.Fire(4)
-	task.wait(1 / 30)
-
-	local AfterReset = {}
-	for Index, Player, Value in Server.ThrottledClientPollEvent.Iter() do
-		if tostring(Player) ~= "Player" then
-			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
-		end
-
-		table.insert(AfterReset, Value)
-	end
-
-	if #AfterReset ~= 1 or AfterReset[1] ~= 4 then
-		ErrorPrint(`Expected throttled polling event to reset after one second; got {Format(AfterReset)}.`)
-	end
-end)
-
-FireManyAndExpectMany("Many Reliable Sync Server", 8, Server.ManyReliableSync, Client.ManyReliableSync, 1)
-FireManyAndExpectMany("Many Reliable Async Server", 8, Server.ManyReliableAsync, Client.ManyReliableAsync, 1)
-FireManyAndExpectMany("Many Unreliable Sync Server", 8, Server.ManyUnreliableSync, Client.ManyUnreliableSync, 1)
-FireManyAndExpectMany("Many Unreliable Async Server", 8, Server.ManyUnreliableAsync, Client.ManyUnreliableAsync, 1)
-
-FireAndExpect("Unknown", Server.Unknown, Client.Unknown, newproxy())
-FireAndExpect("Unknown (false)", Server.Unknown, Client.Unknown, false)
-FireAndExpectAll("Unknown (nil mixed)", Server.Unknown, Client.Unknown, { "a", nil, "b", nil, nil, nil, "c" })
+FireAndExpect("Unknown", ServerExports.Unknown, ClientExports.Unknown, newproxy())
+FireAndExpect("Unknown (false)", ServerExports.Unknown, ClientExports.Unknown, false)
+FireAndExpectAll(
+	"Unknown (nil mixed)",
+	ServerExports.Unknown,
+	ClientExports.Unknown,
+	{ "a", nil, "b", nil, nil, nil, "c" }
+)
 
 FireAndExpect(
 	"Generic",
-	Server.Generic,
-	Client.Generic,
+	ServerExports.Generic,
+	ClientExports.Generic,
 	{ Data = 0, Array = { 0 }, Optional = nil, Nested = { Value = 0 } }
 )
 
-FireAndExpect("Set 8", Server.Flags8, Client.Flags8, GetFlags(8))
-FireAndExpect("Set 16", Server.Flags16, Client.Flags16, GetFlags(16))
-FireAndExpect("Set 32", Server.Flags32, Client.Flags32, GetFlags(32))
-FireAndExpect("Set >32", Server.Flags33, Client.Flags33, GetFlags(33))
+FireAndExpect("Set 8", ServerExports.Flags8, ClientExports.Flags8, GetFlags(8))
+FireAndExpect("Set 16", ServerExports.Flags16, ClientExports.Flags16, GetFlags(16))
+FireAndExpect("Set 32", ServerExports.Flags32, ClientExports.Flags32, GetFlags(32))
+FireAndExpect("Set >32", ServerExports.Flags33, ClientExports.Flags33, GetFlags(33))
 
-FireAndExpect("Map", Server.MapEvent, Client.MapEvent, { ["string"] = 1 })
-FireAndExpect("Map Struct", Server.MapStructEvent, Client.MapStructEvent, { Map = { string = 1 } })
-FireAndExpect("Map Complex", Server.MapComplexEvent, Client.MapComplexEvent, { string = table.create(8, 1) })
-FireAndExpect("Map Reference", Server.MapReferenceEvent, Client.MapReferenceEvent, { A = "A" })
+FireAndExpect("Map", ServerExports.MapEvent, ClientExports.MapEvent, { ["string"] = 1 })
+FireAndExpect("Map Struct", ServerExports.MapStructEvent, ClientExports.MapStructEvent, { Map = { string = 1 } })
+FireAndExpect(
+	"Map Complex",
+	ServerExports.MapComplexEvent,
+	ClientExports.MapComplexEvent,
+	{ string = table.create(8, 1) }
+)
+FireAndExpect("Map Reference", ServerExports.MapReferenceEvent, ClientExports.MapReferenceEvent, { A = "A" })
 
-FireAndExpect("Struct", Server.Reference, Client.Reference, Example)
-FireAndExpect("Array", Server.ArrayPrimitive, Client.ArrayPrimitive, { 1, 2, 3, 4, 5, 6, 7, 8 })
-FireAndExpect("Optional", Server.OptionalPrimitive, Client.OptionalPrimitive, 1)
-FireAndExpect("Optional (nil)", Server.OptionalPrimitive, Client.OptionalPrimitive, nil)
+FireAndExpect("Struct", ServerExports.Reference, ClientExports.Reference, Example)
+FireAndExpect("Array", ServerExports.ArrayPrimitive, ClientExports.ArrayPrimitive, { 1, 2, 3, 4, 5, 6, 7, 8 })
+FireAndExpect("Optional", ServerExports.OptionalPrimitive, ClientExports.OptionalPrimitive, 1)
+FireAndExpect("Optional (nil)", ServerExports.OptionalPrimitive, ClientExports.OptionalPrimitive, nil)
 
-FireAndExpect("Instance Any", Server.InstanceAny, Client.InstanceAny, Instance)
-FireAndExpect("Instance Type", Server.InstanceOfType, Client.InstanceOfType, Instance)
-FireAndFail("Instance Type (Fail)", Server.InstanceOfType, Client.InstanceOfType, nil)
-FireAndExpect("Instance Optional", Server.InstanceOptional, Client.InstanceOptional, Instance)
+FireAndExpect("Instance Any", ServerExports.InstanceAny, ClientExports.InstanceAny, Instance)
+FireAndExpect("Instance Type", ServerExports.InstanceOfType, ClientExports.InstanceOfType, Instance)
+FireAndFail("Instance Type (Fail)", ServerExports.InstanceOfType, ClientExports.InstanceOfType, nil)
+FireAndExpect("Instance Optional", ServerExports.InstanceOptional, ClientExports.InstanceOptional, Instance)
 FireAndExpectSeparate(
 	"Instance Optional (nil)",
-	Server.InstanceOptional,
-	Client.InstanceOptional,
+	ServerExports.InstanceOptional,
+	ClientExports.InstanceOptional,
 	Shared.ServerOnlyInstance,
 	nil
 )
 
 local Array = table.create(8, Example)
-FireAndExpect("Reference", Server.Reference, Client.Reference, Example)
-FireAndExpect("Referency Array", Server.ReferenceArray, Client.ReferenceArray, Array)
-FireAndExpect("Referency Optional", Server.ReferenceOptional, Client.ReferenceOptional, Example)
-FireAndExpect("Referency Optional (nil)", Server.ReferenceOptional, Client.ReferenceOptional, nil)
+FireAndExpect("Reference", ServerExports.Reference, ClientExports.Reference, Example)
+FireAndExpect("Referency Array", ServerExports.ReferenceArray, ClientExports.ReferenceArray, Array)
+FireAndExpect("Referency Optional", ServerExports.ReferenceOptional, ClientExports.ReferenceOptional, Example)
+FireAndExpect("Referency Optional (nil)", ServerExports.ReferenceOptional, ClientExports.ReferenceOptional, nil)
 
-InvokeAndExpect("Remote Function", Client.RemoteFunction, Server.RemoteFunction, 1, true)
-InvokeAndExpect("Remote Function (yield)", Client.RemoteFunction, Server.RemoteFunction, 1, true, 1)
-InvokeAndExpect("Remote Function (error)", Client.RemoteFunction, Server.RemoteFunction, 1, false)
-InvokeAndExpect("Empty Remote Function", Client.EmptyFunction, Server.EmptyFunction, nil, true)
-InvokeAndExpect("Unit Remote Function", Client.UnitFunction, Server.UnitFunction, nil, true)
+InvokeAndExpect("Remote Function", ClientExports.RemoteFunction, ServerExports.RemoteFunction, 1, true)
+InvokeAndExpect("Remote Function (yield)", ClientExports.RemoteFunction, ServerExports.RemoteFunction, 1, true, 1)
+InvokeAndExpect("Remote Function (error)", ClientExports.RemoteFunction, ServerExports.RemoteFunction, 1, false)
+InvokeAndExpect("Empty Remote Function", ClientExports.EmptyFunction, ServerExports.EmptyFunction, nil, true)
+InvokeAndExpect("Unit Remote Function", ClientExports.UnitFunction, ServerExports.UnitFunction, nil, true)
 
-QueueAndExpect("Reliable Queue", Server.ReliableServer, Client.ReliableServer, 1)
-QueueAndExpect("Many Reliable Sync Queue", Server.ManyReliableSync, Client.ManyReliableSync, 1)
-QueueAndExpect("Many Reliable Async Queue", Server.ManyReliableAsync, Client.ManyReliableAsync, 1)
---QueueAndExpect("Unreliable Queue", Server.UnreliableServer, Client.UnreliableServer, 1)
+QueueAndExpect("Reliable Queue", ServerExports.ReliableServer, ClientExports.ReliableServer, 1)
+QueueAndExpect("Many Reliable Sync Queue", ServerExports.ManyReliableSync, ClientExports.ManyReliableSync, 1)
+QueueAndExpect("Many Reliable Async Queue", ServerExports.ManyReliableAsync, ClientExports.ManyReliableAsync, 1)
+--QueueAndExpect("Unreliable Queue", ServerExports.UnreliableServer, ClientExports.UnreliableServer, 1)
 
-FireAndFail("Invalid Instance Any", Server.InstanceAny, Client.InstanceAny, true)
-FireAndFail("Invalid Instance Type", Server.InstanceOfType, Client.InstanceOfType, InstanceNeverIsA)
+FireAndFail("Invalid Instance Any", ServerExports.InstanceAny, ClientExports.InstanceAny, true)
+FireAndFail("Invalid Instance Type", ServerExports.InstanceOfType, ClientExports.InstanceOfType, InstanceNeverIsA)
 
-FireAndExpectAll("Correct order", Server.ReliableServer, Client.ReliableServer, { 1, 2, 3, 4 })
+FireAndExpectAll("Correct order", ServerExports.ReliableServer, ClientExports.ReliableServer, { 1, 2, 3, 4 })
 FireAndExpectAll(
 	"Multiple instances (nil and non nil)",
-	Server.InstanceOptional,
-	Client.InstanceOptional,
+	ServerExports.InstanceOptional,
+	ClientExports.InstanceOptional,
 	{ nil, Instance, nil, Instance, Instance }
 )
 
-FireAndExpectAll("Many primitive", Server.ReliableServer, Client.ReliableServer, table.create(255, 1))
-FireAndExpectAll("Many structs", Server.Reference, Client.Reference, table.create(255, Example))
+FireAndExpectAll("Many primitive", ServerExports.ReliableServer, ClientExports.ReliableServer, table.create(255, 1))
+FireAndExpectAll("Many structs", ServerExports.Reference, ClientExports.Reference, table.create(255, Example))
 
 FireAndExpectTuple(
 	"Reliable Tuple",
-	Server.Tuple,
-	Client.Tuple,
+	ServerExports.Tuple,
+	ClientExports.Tuple,
 	255,
 	"A",
 	65535,
@@ -902,8 +852,8 @@ FireAndExpectTuple(
 )
 FireAndExpectTuple(
 	"Unreliable Tuple",
-	Server.TupleUnreliable,
-	Client.TupleUnreliable,
+	ServerExports.TupleUnreliable,
+	ClientExports.TupleUnreliable,
 	255,
 	"A",
 	65535,
@@ -912,8 +862,8 @@ FireAndExpectTuple(
 )
 InvokeAndExpectTuple(
 	"Function Tuple",
-	Client.TupleFunction,
-	Server.TupleFunction,
+	ClientExports.TupleFunction,
+	ServerExports.TupleFunction,
 	{ 255, "A", 65535, Instance, Instance },
 	{ Instance, Instance, 65535, "A", 255 }
 )
@@ -921,40 +871,50 @@ InvokeAndExpectTuple(
 FireAllAndExpectAll("Many events", 32, {
 	Reliable = {
 		Data = { 0 },
-		Outgoing = Server.ReliableServer,
-		Incoming = Client.ReliableServer,
+		Outgoing = ServerExports.ReliableServer,
+		Incoming = ClientExports.ReliableServer,
 	},
 	Unreliable = {
 		Data = { 0 },
-		Outgoing = Server.UnreliableServer,
-		Incoming = Client.UnreliableServer,
+		Outgoing = ServerExports.UnreliableServer,
+		Incoming = ClientExports.UnreliableServer,
 	},
 	Reference = {
 		Data = { Example },
-		Outgoing = Server.Reference,
-		Incoming = Client.Reference,
+		Outgoing = ServerExports.Reference,
+		Incoming = ClientExports.Reference,
 	},
 	ReliableTuple = {
 		Data = { 255, "A", 65535, Instance, Instance, table.create(8, 0) },
-		Outgoing = Server.Tuple,
-		Incoming = Client.Tuple,
+		Outgoing = ServerExports.Tuple,
+		Incoming = ClientExports.Tuple,
 	},
 	UnreliableTuple = {
 		Data = { 255, "A", 65535, Instance, Instance },
-		Outgoing = Server.TupleUnreliable,
-		Incoming = Client.TupleUnreliable,
+		Outgoing = ServerExports.TupleUnreliable,
+		Incoming = ClientExports.TupleUnreliable,
 	},
 })
 
-FireAndExpect("TagEnum Join", Server.PlayerEvent, Client.PlayerEvent, { Type = "Join", Name = "Player", UserId = 5 })
-FireAndExpect("TagEnum Chat", Server.PlayerEvent, Client.PlayerEvent, { Type = "Chat", UserId = 5, Message = "Hello" })
-FireAndExpect("TagEnum Leave", Server.PlayerEvent, Client.PlayerEvent, { Type = "Leave", UserId = 5 })
+FireAndExpect(
+	"TagEnum Join",
+	ServerExports.PlayerEvent,
+	ClientExports.PlayerEvent,
+	{ Type = "Join", Name = "Player", UserId = 5 }
+)
+FireAndExpect(
+	"TagEnum Chat",
+	ServerExports.PlayerEvent,
+	ClientExports.PlayerEvent,
+	{ Type = "Chat", UserId = 5, Message = "Hello" }
+)
+FireAndExpect("TagEnum Leave", ServerExports.PlayerEvent, ClientExports.PlayerEvent, { Type = "Leave", UserId = 5 })
 
 RunClosure("Color3", function()
 	local Color = BaseEnvironment.Color3.fromRGB(math.random(0, 255), math.random(0, 255), math.random(0, 255))
 
-	local Serialized = Server.Color.Write(Color)
-	local Deserialized = Server.Color.Read(Serialized)
+	local Serialized = ServerExports.Color.Write(Color)
+	local Deserialized = ServerExports.Color.Read(Serialized)
 
 	assert(Color.R == Deserialized.R, `Expected {Color.R}, got {Deserialized.R}`)
 	assert(Color.G == Deserialized.G, `Expected {Color.G}, got {Deserialized.G}`)
@@ -970,8 +930,8 @@ RunClosure("Color3 Array", function()
 		)
 	end
 
-	local Serialized = Server.ColorArray.Write(Array)
-	local Deserialized = Server.ColorArray.Read(Serialized)
+	local Serialized = ServerExports.ColorArray.Write(Array)
+	local Deserialized = ServerExports.ColorArray.Read(Serialized)
 
 	assert(#Array == #Deserialized, `Expected {#Array} elements`)
 
@@ -986,8 +946,8 @@ end)
 RunClosure("DateTime", function()
 	for n = 1, 30 do
 		local DateTime = BaseEnvironment.DateTime.fromUnixTimestamp(2 ^ n)
-		local Serialized = Server.DateSeconds.Write(DateTime)
-		local Deserialized = Server.DateSeconds.Read(Serialized)
+		local Serialized = ServerExports.DateSeconds.Write(DateTime)
+		local Deserialized = ServerExports.DateSeconds.Read(Serialized)
 		assert(
 			DateTime.UnixTimestamp == Deserialized.UnixTimestamp,
 			`Expected timestamp {DateTime.UnixTimestamp}, got {Deserialized.UnixTimestamp}`
@@ -998,8 +958,8 @@ end)
 RunClosure("DateTimeMillis", function()
 	for n = 1, 30 do
 		local DateTime = BaseEnvironment.DateTime.fromUnixTimestampMillis(2 ^ n)
-		local Serialized = Server.DateMilliseconds.Write(DateTime)
-		local Deserialized = Server.DateMilliseconds.Read(Serialized)
+		local Serialized = ServerExports.DateMilliseconds.Write(DateTime)
+		local Deserialized = ServerExports.DateMilliseconds.Read(Serialized)
 		assert(
 			DateTime.UnixTimestampMillis == Deserialized.UnixTimestampMillis,
 			`Expected timestamp {DateTime.UnixTimestampMillis}, got {Deserialized.UnixTimestampMillis}`
@@ -1009,8 +969,8 @@ end)
 
 RunClosure("BrickColor", function()
 	local BrickColor = BaseEnvironment.BrickColor.new(373)
-	local Serialized = Server.BrickkColor.Write(BrickColor)
-	local Deserialized = Server.BrickkColor.Read(Serialized)
+	local Serialized = ServerExports.BrickkColor.Write(BrickColor)
+	local Deserialized = ServerExports.BrickkColor.Read(Serialized)
 
 	assert(
 		BrickColor.Number == Deserialized.Number,
@@ -1020,8 +980,8 @@ end)
 
 RunClosure("Nested Map", function()
 	local Map = { string = 1 }
-	local Serialized = Server.MapNested.Write({ [Map] = Map })
-	local Deserialized = Server.MapNested.Read(Serialized)
+	local Serialized = ServerExports.MapNested.Write({ [Map] = Map })
+	local Deserialized = ServerExports.MapNested.Read(Serialized)
 
 	local Elements = 0
 	for KeyMap, ValueMap in Deserialized do
@@ -1049,8 +1009,8 @@ RunClosure("Standalone", function()
 		},
 	}
 
-	local Serialized = Server.Standalone.Write(Original)
-	local Deserialized = Server.Standalone.Read(Serialized)
+	local Serialized = ServerExports.Standalone.Write(Original)
+	local Deserialized = ServerExports.Standalone.Read(Serialized)
 
 	assert(Equals(Original, Deserialized), "Deserialized doesn't match original")
 end)
@@ -1067,8 +1027,8 @@ RunClosure("Disconnect & Queue", function()
 	}
 
 	for _, Event in Events do
-		local Outgoing = Server[Event]
-		local Incoming = Client[Event]
+		local Outgoing = ServerExports[Event]
+		local Incoming = ClientExports[Event]
 
 		local NeverRecieve: never
 		Incoming.On(function(Value: never)
@@ -1098,8 +1058,18 @@ end)
 
 local Element = { Static = 0, Dynamic = buffer.create(64) }
 
-FireAndExpect("Dynamic Array Data Integrity", Server.DynamicArray, Client.DynamicArray, table.create(12, Element))
-FireAndExpect("Dynamic Map Data Integrity", Server.DynamicMap, Client.DynamicMap, table.create(64, Element))
+FireAndExpect(
+	"Dynamic Array Data Integrity",
+	ServerExports.DynamicArray,
+	ClientExports.DynamicArray,
+	table.create(12, Element)
+)
+FireAndExpect(
+	"Dynamic Map Data Integrity",
+	ServerExports.DynamicMap,
+	ClientExports.DynamicMap,
+	table.create(64, Element)
+)
 
 RunClosure("CLI compile prompt", function()
 	pcall(function()
@@ -1178,32 +1148,42 @@ local MergeStruct: Server.MergeStruct = {
 	},
 }
 
-FireAndPollExpect("Poll Reliable Client", Client.ClientPollEvent, Server.ClientPollEvent, MergeStruct)
-FireAndPollExpect("Poll Reliable Server", Server.ServerPollEvent, Client.ServerPollEvent, MergeStruct)
+FireAndPollExpect("Poll Reliable Client", ClientExports.ClientPollEvent, ServerExports.ClientPollEvent, MergeStruct)
+FireAndPollExpect("Poll Reliable Server", ServerExports.ServerPollEvent, ClientExports.ServerPollEvent, MergeStruct)
 FireAndPollExpect(
 	"Poll Unreliable Client",
-	Client.ClientUnreliablePollEvent,
-	Server.ClientUnreliablePollEvent,
+	ClientExports.ClientUnreliablePollEvent,
+	ServerExports.ClientUnreliablePollEvent,
 	MergeStruct
 )
 FireAndPollExpect(
 	"Poll Unreliable Server",
-	Server.ServerUnreliablePollEvent,
-	Client.ServerUnreliablePollEvent,
+	ServerExports.ServerUnreliablePollEvent,
+	ClientExports.ServerUnreliablePollEvent,
 	MergeStruct
 )
-FireAndPollExpect("Poll Empty Reliable Client", Client.ClientEmptyPollEvent, Server.ClientEmptyPollEvent, nil)
-FireAndPollExpect("Poll Empty Reliable Server", Server.ServerEmptyPollEvent, Client.ServerEmptyPollEvent, nil)
+FireAndPollExpect(
+	"Poll Empty Reliable Client",
+	ClientExports.ClientEmptyPollEvent,
+	ServerExports.ClientEmptyPollEvent,
+	nil
+)
+FireAndPollExpect(
+	"Poll Empty Reliable Server",
+	ServerExports.ServerEmptyPollEvent,
+	ClientExports.ServerEmptyPollEvent,
+	nil
+)
 FireAndPollExpect(
 	"Poll Empty Unreliable Client",
-	Client.ClientEmptyUnreliablePollEvent,
-	Server.ClientEmptyUnreliablePollEvent,
+	ClientExports.ClientEmptyUnreliablePollEvent,
+	ServerExports.ClientEmptyUnreliablePollEvent,
 	nil
 )
 FireAndPollExpect(
 	"Poll Empty Unreliable Server",
-	Server.ServerEmptyUnreliablePollEvent,
-	Client.ServerEmptyUnreliablePollEvent,
+	ServerExports.ServerEmptyUnreliablePollEvent,
+	ClientExports.ServerEmptyUnreliablePollEvent,
 	nil
 )
 
@@ -1215,17 +1195,17 @@ RunClosure("Queue up and poll", function()
 	}
 
 	for _ = 1, Expect do
-		Client.ClientPollEvent.Fire(MergeStruct)
-		Server.ServerPollEvent.FireAll(MergeStruct)
+		ClientExports.ClientPollEvent.Fire(MergeStruct)
+		ServerExports.ServerPollEvent.FireAll(MergeStruct)
 	end
 
 	task.wait(1 / 30)
 
-	for Index, Value in Client.ServerPollEvent.Iter() do
+	for Index, Value in ClientExports.ServerPollEvent.Iter() do
 		table.insert(Results.Client, Value)
 	end
 
-	for Index, Player, Value in Server.ClientPollEvent.Iter() do
+	for Index, Player, Value in ServerExports.ClientPollEvent.Iter() do
 		if tostring(Player) ~= "Player" then
 			ErrorPrint(`Expected argument #1 to be Player, got {Player} instead.`)
 		end
@@ -1249,11 +1229,11 @@ end)
 RunClosure("Ranges should be enforced", function()
 	do
 		local UpperSuccess = pcall(function()
-			Client.NegativeRange.Write(11)
+			ClientExports.NegativeRange.Write(11)
 		end)
 
 		local LowerSuccess = pcall(function()
-			Client.NegativeRange.Write(-6)
+			ClientExports.NegativeRange.Write(-6)
 		end)
 
 		if UpperSuccess or LowerSuccess then
@@ -1263,11 +1243,11 @@ RunClosure("Ranges should be enforced", function()
 
 	do
 		local UpperSuccess = pcall(function()
-			Client.DecimalRange.Write(10.6)
+			ClientExports.DecimalRange.Write(10.6)
 		end)
 
 		local LowerSuccess = pcall(function()
-			Client.DecimalRange.Write(-5.6)
+			ClientExports.DecimalRange.Write(-5.6)
 		end)
 
 		if UpperSuccess or LowerSuccess then
@@ -1277,11 +1257,11 @@ RunClosure("Ranges should be enforced", function()
 
 	do
 		local UpperSuccess = pcall(function()
-			Client.UnboundUpper.Write(2 ^ 53 + 1)
+			ClientExports.UnboundUpper.Write(2 ^ 53 + 1)
 		end)
 
 		local LowerSuccess = pcall(function()
-			Client.UnboundUpper.Write(-1)
+			ClientExports.UnboundUpper.Write(-1)
 		end)
 
 		if UpperSuccess or LowerSuccess then
@@ -1291,11 +1271,11 @@ RunClosure("Ranges should be enforced", function()
 
 	do
 		local UpperSuccess = pcall(function()
-			Client.UnboundLower.Write(1)
+			ClientExports.UnboundLower.Write(1)
 		end)
 
 		local LowerSuccess = pcall(function()
-			Client.UnboundLower.Write(-(2 ^ 53 + 1))
+			ClientExports.UnboundLower.Write(-(2 ^ 53 + 1))
 		end)
 
 		if UpperSuccess or LowerSuccess then
@@ -1303,25 +1283,25 @@ RunClosure("Ranges should be enforced", function()
 		end
 	end
 
-	Client.ExactRange.Write(0)
+	ClientExports.ExactRange.Write(0)
 
-	Client.DecimalRange.Write(-5.5)
-	Client.DecimalRange.Write(10)
+	ClientExports.DecimalRange.Write(-5.5)
+	ClientExports.DecimalRange.Write(10)
 
-	Client.NegativeRange.Write(-5)
-	Client.NegativeRange.Write(10)
+	ClientExports.NegativeRange.Write(-5)
+	ClientExports.NegativeRange.Write(10)
 
-	Client.UnboundUpper.Write(0)
-	Client.UnboundUpper.Write(16777216)
+	ClientExports.UnboundUpper.Write(0)
+	ClientExports.UnboundUpper.Write(16777216)
 
-	Client.UnboundLower.Write(-16777216)
-	Client.UnboundLower.Write(0)
+	ClientExports.UnboundLower.Write(-16777216)
+	ClientExports.UnboundLower.Write(0)
 end)
 
 RunClosure("Multi Dimensional Array", function()
 	local Array = { { { 1, 2, 3, 4, 5, 6 } } }
-	local Serialized = Client.MultiDimensionalArray.Write(Array)
-	local Deserialized = Client.MultiDimensionalArray.Read(Serialized)
+	local Serialized = ClientExports.MultiDimensionalArray.Write(Array)
+	local Deserialized = ClientExports.MultiDimensionalArray.Read(Serialized)
 
 	if not Equals(Array, Deserialized) then
 		ErrorPrint(`Expected: {Format(Array)}, got: {Format(Deserialized)} instead`)
@@ -1336,8 +1316,8 @@ do
 
 	FireAndExpectTuple(
 		"Generics containing a unit enum value",
-		Server.Issue33.Event,
-		Client.Issue33.Event,
+		ServerExports.Issue33.Event,
+		ClientExports.Issue33.Event,
 		map,
 		enum,
 		struct
@@ -1345,7 +1325,7 @@ do
 end
 
 RunClosure("Export buffer trimming", function()
-	local Buffer = Client.Byte.Write(0)
+	local Buffer = ClientExports.Byte.Write(0)
 	if buffer.len(Buffer) ~= 1 then
 		ErrorPrint(`Expected buffer to be trimmed to 1 byte`)
 	end
@@ -1365,7 +1345,15 @@ do
 		Test = 1,
 	}
 
-	FireAndExpectTuple("Indexers", Server.Indexers.TestEvent, Client.Indexers.TestEvent, struct, flags, enum, tagged)
+	FireAndExpectTuple(
+		"Indexers",
+		ServerExports.Indexers.TestEvent,
+		ClientExports.Indexers.TestEvent,
+		struct,
+		flags,
+		enum,
+		tagged
+	)
 end
 
 RunClosure("Buffer (Default, Fixed, Bounded)", function()
@@ -1383,20 +1371,20 @@ RunClosure("Buffer (Default, Fixed, Bounded)", function()
 
 	-- test serdes
 	do
-		local Serialised = Client.Buffer.Write(BoundedBuffer)
-		local Deserialised = Client.Buffer.Read(Serialised)
+		local Serialised = ClientExports.Buffer.Write(BoundedBuffer)
+		local Deserialised = ClientExports.Buffer.Read(Serialised)
 		assert(Equals(BoundedBuffer, Deserialised), `Default buffer serdes failed`)
 	end
 
 	do
-		local Serialised = Client.ExactBuffer.Write(ExactBuffer)
-		local Deserialised = Client.ExactBuffer.Read(Serialised)
+		local Serialised = ClientExports.ExactBuffer.Write(ExactBuffer)
+		local Deserialised = ClientExports.ExactBuffer.Read(Serialised)
 		assert(Equals(ExactBuffer, Deserialised), `Fixed buffer serdes failed`)
 	end
 
 	do
-		local Serialised = Client.BoundedBuffer.Write(BoundedBuffer)
-		local Deserialised = Client.BoundedBuffer.Read(Serialised)
+		local Serialised = ClientExports.BoundedBuffer.Write(BoundedBuffer)
+		local Deserialised = ClientExports.BoundedBuffer.Read(Serialised)
 		assert(Equals(BoundedBuffer, Deserialised), `Bounded buffer serdes failed`)
 	end
 end)

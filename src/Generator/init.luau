@@ -97,7 +97,7 @@ local REMOTE_TAMPER_BODY = {
 }
 
 local REMOTE_TAMPER_CHECK_BODY = {
-	"local Count = select(\"#\", ...)\n",
+	'local Count = select("#", ...)\n',
 	"local Nil1, Nil2, Nil3 = ...\n",
 	"if not CheckRemoteTamper(Player, Count, Nil1, Nil2, Nil3) then\n",
 	"\treturn\n",
@@ -186,6 +186,8 @@ local Noop: Builder.Builder
 local Events: Builder.Builder
 local UserTypes: Builder.Builder
 local LuauTypes: Builder.Builder
+local UserExports: Builder.Builder
+local NoopExports: Builder.Builder
 local Reliables: Blocks.Block
 local Unreliables: Blocks.Block
 local Return: Builder.Builder
@@ -457,7 +459,7 @@ function Declarations.Event(Declaration: Parser.Event)
 	local WriteEvent = `{Util.GetPath(Identifier, true, Scope)}({Arguments})`
 
 	Body.Push(`{Declaration.Name} = \{`, 0, Indent)
-	Noop.Push(`{Declaration.Name} = \{`, 0, Indent)
+	NoopExports.Push(`{Declaration.Name} = \{`, 0, Indent)
 
 	if Value.From ~= Context and IsPolling ~= true then
 		local IsSync = (Value.Call == "SingleSync" or Value.Call == "ManySync")
@@ -558,11 +560,7 @@ function Declarations.Event(Declaration: Parser.Event)
 				:End()
 		end
 
-		if IsServerThrottle then
-			DispatchBlock:End()
-		end
-
-		Noop.Push(`{Casing.On} = NOOP`, 0, Indent + 1)
+		NoopExports.Push(`{Casing.On} = NOOP`, 0, Indent + 1)
 		Body.PushLines(Listener.Content, 0, Indent + 1)
 	elseif Value.From ~= Context and IsPolling then
 		Events.Push(`{Queue} = CreateQueue()`)
@@ -616,8 +614,8 @@ function Declarations.Event(Declaration: Parser.Event)
 			:End()
 			:Wrap("", ",")
 
-		Noop.Push(`{Casing.Iter} = NOOP,`, 0, Indent + 1)
-		Noop.Push(`{Casing.Next} = NOOP`, 0, Indent + 1)
+		NoopExports.Push(`{Casing.Iter} = NOOP,`, 0, Indent + 1)
+		NoopExports.Push(`{Casing.Next} = NOOP`, 0, Indent + 1)
 
 		Body.PushLines(Iter.Content, 0, Indent + 1)
 		Body.Push("--- @deprecated v0.14.1 -- Use `Iter` instead.", 0, Indent + 1)
@@ -637,7 +635,7 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 		Fire:End()
 
-		Noop.Push(`{Casing.Fire} = NOOP`, 0, Indent + 1)
+		NoopExports.Push(`{Casing.Fire} = NOOP`, 0, Indent + 1)
 		Body.PushLines(Fire.Content, 0, Indent + 1)
 	else
 		local Fire = Blocks.Function(Casing.Fire, `Player: Player, {Values}`, "()", true)
@@ -705,7 +703,7 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 		FireExcept:End()
 
-		Noop.PushLines({
+		NoopExports.PushLines({
 			`{Casing.Fire} = NOOP,\n`,
 			`{Casing.FireAll} = NOOP,\n`,
 			`{Casing.FireList} = NOOP,\n`,
@@ -721,8 +719,8 @@ function Declarations.Event(Declaration: Parser.Event)
 	Channel.Count += 1
 
 	Body.Push(`\},`, 0, Indent)
-	Noop.Push(`\},`, 0, Indent)
-	Return.PushLines(Body.DumpLines(), 0)
+	NoopExports.Push(`\},`, 0, Indent)
+	UserExports.PushLines(Body.DumpLines(), 0)
 end
 
 function Declarations.Function(Declaration: Parser.Function)
@@ -780,7 +778,7 @@ function Declarations.Function(Declaration: Parser.Function)
 	local Body = Builder.new()
 	local Indent = Util.GetScopeIndent(Scope)
 
-	Noop.Push(`{Name} = \{`, 0, Indent)
+	NoopExports.Push(`{Name} = \{`, 0, Indent)
 	Body.Push(`{Name} = \{`, 0, Indent)
 
 	--> Create queue and event branch
@@ -841,7 +839,7 @@ function Declarations.Function(Declaration: Parser.Function)
 			:Lines(FlushQueue.Content, 1)
 			:End()
 
-		Noop.Push(`{Casing.On} = NOOP`, 0, Indent + 1)
+		NoopExports.Push(`{Casing.On} = NOOP`, 0, Indent + 1)
 		Body.PushLines(Listener.Content, 0, 2)
 	else
 		--> Return recieve body
@@ -912,16 +910,16 @@ function Declarations.Function(Declaration: Parser.Function)
 		end
 
 		Invoke:End()
-		Noop.Push(`{Casing.Invoke} = NOOP`, 0, Indent + 1)
+		NoopExports.Push(`{Casing.Invoke} = NOOP`, 0, Indent + 1)
 		Body.PushLines(Invoke.Content, 0, Indent + 1)
 	end
 
 	Channel.Count += 1
 	Channel.Listening = true
 
-	Noop.Push(`\},`, 0, Indent)
+	NoopExports.Push(`\},`, 0, Indent)
 	Body.Push(`\},`, 0, Indent)
-	Return.PushLines(Body.DumpLines(), 0)
+	UserExports.PushLines(Body.DumpLines(), 0)
 end
 
 function Declarations.Array(Declaration: Parser.Array, Read: Blocks.Block, Write: Blocks.Block, Variable: string)
@@ -1226,8 +1224,8 @@ function Generators.Export(Declaration: Type)
 
 	local BodyLines = Body.DumpLines()
 
-	Noop.PushLines(table.clone(BodyLines), 0, 0)
-	Return.PushLines(BodyLines, 0, 0)
+	NoopExports.PushLines(table.clone(BodyLines), 0, 0)
+	UserExports.PushLines(BodyLines, 0, 0)
 end
 
 function Generators.Event(
@@ -1278,13 +1276,13 @@ function Generators.Scope(Declaration: Parser.ScopeNode)
 	Path = string.sub(Path, 1, #Path - 1)
 
 	Scope = NewScope
-	Noop.Push(`{Name} = \{`, 0, Indent)
-	Return.Push(`{Name} = \{`, 0, Indent)
+	NoopExports.Push(`{Name} = \{`, 0, Indent)
+	UserExports.Push(`{Name} = \{`, 0, Indent)
 
 	Generators.AbstractSyntaxTree(Value.Values)
 
-	Noop.Push(`},`, 0, Indent)
-	Return.Push(`},`, 0, Indent)
+	NoopExports.Push(`},`, 0, Indent)
+	UserExports.Push(`},`, 0, Indent)
 	Scope = Parent
 end
 
@@ -1318,6 +1316,8 @@ function Generator.Reset()
 	Events = Builder.new()
 	UserTypes = Builder.new()
 	LuauTypes = Builder.new()
+	UserExports = Builder.new()
+	NoopExports = Builder.new()
 	Return = Builder.new()
 
 	--> Reset channels
@@ -1421,11 +1421,17 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Reliables = Reliables:End():End()
 	Unreliables = Unreliables:End():End()
 
+	Noop.Push(`Exports = table.freeze(\{`, 0, 1)
+	Noop.PushLines(NoopExports.DumpLines(), 0, 1)
+	Noop.Push(`}),`, 0, 1)
 	Noop.Push(`\})`, 0, 1)
 	Noop.Push(`return Returns :: {EVENTS_TYPE}`, 0, 1)
 	Noop.Push(`end`, 0, 0)
 
 	Return.PushFront(`\nlocal Returns = table.freeze(\{`)
+	Return.Push(`Exports = table.freeze(\{`, 0, 1)
+	Return.PushLines(UserExports.DumpLines(), 0, 1)
+	Return.Push(`}),`, 0, 1)
 	Return.Push(`})`)
 
 	local ScopeValidationBody = {}
@@ -1490,7 +1496,9 @@ function Generator.GenerateShared(AbstractSyntaxTree: Parser.Body): string
 		string.split(Source[2], "\r"),
 		{ "\n" },
 		{ `\nreturn \{\n` },
-		Return.DumpLines(),
+		{ `\tExports = table.freeze(\{\n` },
+		UserExports.DumpLines(),
+		{ `\t}),\n` },
 		{ "\n}" }
 	)
 

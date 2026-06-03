@@ -17,8 +17,10 @@ type AbstractSyntaxTree = Parser.Body
 type State = {
 	Scope: Scope,
 	Indent: number,
+	ExportIndent: number,
 	Casing: Settings.Cases,
 	Builder: Builder.Builder,
+	Exports: Builder.Builder,
 	Context: Context,
 	Options: Parser.Options,
 }
@@ -179,12 +181,12 @@ end
 function Generators.Export(State: State, Type: Type)
 	local Name = Type.Name
 
-	local Indent = State.Indent
+	local Indent = State.ExportIndent
 	local Casing = State.Casing
-	local StringBuilder = State.Builder
+	local StringBuilder = State.Exports
 
 	local Types, Values = GetTypescriptType(State, Type)
-	StringBuilder.Push(`{GetPrefix(Indent)}const {Name}: \{`, 0, Indent)
+	StringBuilder.Push(`{Name}: \{`, 0, Indent)
 	StringBuilder.Push(`{Casing.Read}: (Buffer: buffer) => {Types}`, 0, Indent + 1)
 	StringBuilder.Push(`{Casing.Write}: ({Values}) => buffer`, 0, Indent + 1)
 	StringBuilder.Push(`\}`, 0, Indent)
@@ -194,9 +196,9 @@ function Generators.Function(State: State, Function: Parser.Function)
 	local Name = Function.Name
 	local Value = Function.Value
 
-	local Indent = State.Indent
+	local Indent = State.ExportIndent
 	local Casing = State.Casing
-	local StringBuilder = State.Builder
+	local StringBuilder = State.Exports
 
 	local _, Values = "void", "Value: void"
 	if Value.Data then
@@ -208,7 +210,7 @@ function Generators.Function(State: State, Function: Parser.Function)
 		ReturnTypes = GetTypescriptType(State, Value.Return)
 	end
 
-	StringBuilder.Push(`export {GetPrefix(Indent)}const {Name}: \{`, 0, Indent)
+	StringBuilder.Push(`{Name}: \{`, 0, Indent)
 
 	if State.Context == "Server" then
 		StringBuilder.Push(
@@ -231,9 +233,9 @@ function Generators.Event(State: State, Event: Parser.Event)
 	local Name = Event.Name
 	local Value = Event.Value
 
-	local Indent = State.Indent
+	local Indent = State.ExportIndent
 	local Casing = State.Casing
-	local StringBuilder = State.Builder
+	local StringBuilder = State.Exports
 
 	local IsPolling = Value.Call == "Polling" or State.Options.UsePolling
 
@@ -252,7 +254,7 @@ function Generators.Event(State: State, Event: Parser.Event)
 		ListenerValues = `LuaTuple<[{ListenerValues}]>`
 	end
 
-	StringBuilder.Push(`export {GetPrefix(Indent)}const {Name}: \{`, 0, Indent)
+	StringBuilder.Push(`{Name}: \{`, 0, Indent)
 
 	if Value.From == State.Context then
 		if Value.From == "Server" then
@@ -278,15 +280,21 @@ function Generators.Scope(State: State, Scope: Parser.ScopeNode)
 
 	local Parent = State.Scope
 	local Indent = State.Indent
+	local ExportIndent = State.ExportIndent
 	local StringBuilder = State.Builder
+	local Exports = State.Exports
 
 	State.Indent += 1
+	State.ExportIndent += 1
 	State.Scope = Value.Scope
 
+	Exports.Push(`{Name}: \{`, 0, ExportIndent)
 	StringBuilder.Push(`export {GetPrefix(Indent)}namespace {Name} \{`, 0, Indent)
 	Generators.Tree(State, Value.Values)
 	StringBuilder.Push(`}`, 0, Indent)
+	Exports.Push(`}`, 0, ExportIndent)
 
+	State.ExportIndent -= 1
 	State.Indent -= 1
 	State.Scope = Parent
 end
@@ -313,10 +321,13 @@ return function(FileContext: Context, AbstractSyntaxTree: AbstractSyntaxTree): s
 	local Options = AbstractSyntaxTree.Value.Options
 	local Casing = Settings.GetCasing(Options.Casing or "Pascal" :: any)
 	local StringBuilder = Builder.new()
+	local ExportsBuilder = Builder.new()
 
 	StringBuilder.Push(VERSION_HEADER)
 	if FileContext == "Server" and Options.RemoteTamperCheck then
-		StringBuilder.Push(`export declare const OnRemoteTamperingDetected: (Callback: (Player: Player) => void) => (() => void)`)
+		StringBuilder.Push(
+			`export declare const OnRemoteTamperingDetected: (Callback: (Player: Player) => void) => (() => void)`
+		)
 	end
 	StringBuilder.Push(`export declare const {Casing.StepReplication}: () => void`)
 
@@ -327,13 +338,19 @@ return function(FileContext: Context, AbstractSyntaxTree: AbstractSyntaxTree): s
 	local State: State = {
 		Scope = nil :: any,
 		Indent = 0,
+		ExportIndent = 1,
 		Casing = Casing,
 		Context = FileContext,
 		Options = Options,
 		Builder = StringBuilder,
+		Exports = ExportsBuilder,
 	}
 
 	Generators.Tree(State, AbstractSyntaxTree.Value.Declarations)
+
+	StringBuilder.Push(`export declare const Exports: \{`)
+	StringBuilder.PushLines(ExportsBuilder.DumpLines())
+	StringBuilder.Push(`\}`)
 
 	return table.concat(StringBuilder.DumpLines())
 end
