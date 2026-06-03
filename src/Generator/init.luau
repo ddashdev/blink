@@ -21,8 +21,9 @@ local Sources = {
 }
 
 local EVENTS_TYPE = "BLINK_EVENTS_SYMBOL"
-local DEFAULT_SERVER_BYTE_LIMIT = 10 * 1024
-local DEFAULT_REMOTE_TAMPER_NILS = 3
+local DEFAULT_SERVER_BYTE_LIMIT = 8 * 1024
+local DEFAULT_REMOTE_TAMPER_NILS = 12
+
 local DIRECTIVES = {
 	"--!strict\n",
 	"--!native\n",
@@ -57,10 +58,6 @@ local EVENT_SYNC_VALIDATION = {
 	"SerdesThread = coroutine.running()\n",
 }
 
-local SERVER_THROTTLE_CLEANUP_DECLARATION = {
-	"local ClearServerThrottles: (Player) -> () = function(Player) end\n",
-}
-
 local function ServerByteLimitBody(Reliability: string, Limit: number): { string }
 	return {
 		`if Size > {Limit} then\n`,
@@ -71,22 +68,24 @@ local function ServerByteLimitBody(Reliability: string, Limit: number): { string
 end
 
 local REMOTE_TAMPER_BODY = {
-	"local RemoteTamperCallback: ((Player) -> ())? = nil\n",
+	'local RemoteTamperCallback: ((Player: Player, Channel: "Reliable" | "Unreliable", Args: { any }, Received: number, Expected: number) -> ())? = nil\n',
 	"\n",
-	"local function CheckRemoteTamper(Player: Player, Count: number, Nil1: any, Nil2: any, Nil3: any): boolean\n",
-	`\tif Count == {DEFAULT_REMOTE_TAMPER_NILS} and Nil1 == nil and Nil2 == nil and Nil3 == nil then\n`,
+	'local function CheckRemoteTamper(Player: Player, Channel: "Reliable" | "Unreliable", ...): boolean\n',
+	`\tlocal NilCount = select("#", ...)\n`,
+	"\tlocal Args = table.pack(...)\n",
+	`\tif NilCount == {DEFAULT_REMOTE_TAMPER_NILS} and #Args == 0 then\n`,
 	"\t\treturn true\n",
 	"\tend\n",
 	"\n",
 	"\tlocal Callback = RemoteTamperCallback\n",
 	"\tif Callback then\n",
-	"\t\ttask.spawn(Callback, Player)\n",
+	`\t\ttask.spawn(Callback, Player, Channel, Args, NilCount, {DEFAULT_REMOTE_TAMPER_NILS})\n`,
 	"\tend\n",
 	"\n",
 	"\treturn false\n",
 	"end\n",
 	"\n",
-	"local function OnRemoteTamperingDetected(Callback: (Player) -> ()): () -> ()\n",
+	'local function OnRemoteTamperingDetected(Callback: (Player: Player, Channel: "Reliable" | "Unreliable", Args: { any }, Received: number, Expected: number) -> ()): () -> ()\n',
 	"\tRemoteTamperCallback = Callback\n",
 	"\treturn function()\n",
 	"\t\tif RemoteTamperCallback == Callback then\n",
@@ -96,10 +95,14 @@ local REMOTE_TAMPER_BODY = {
 	"end\n",
 }
 
-local REMOTE_TAMPER_CHECK_BODY = {
-	'local Count = select("#", ...)\n',
-	"local Nil1, Nil2, Nil3 = ...\n",
-	"if not CheckRemoteTamper(Player, Count, Nil1, Nil2, Nil3) then\n",
+local RELIABLE_REMOTE_TAMPER_CHECK_BODY = {
+	'if not CheckRemoteTamper(Player, "Reliable", ...) then\n',
+	"\treturn\n",
+	"end\n",
+}
+
+local UNRELIABLE_REMOTE_TAMPER_CHECK_BODY = {
+	'if not CheckRemoteTamper(Player, "Unreliable", ...) then\n',
 	"\treturn\n",
 	"end\n",
 }
@@ -111,47 +114,6 @@ local function FireServerArguments(Options: Parser.Options): string
 
 	return "Buffer, SendInstances"
 end
-
-local SERVER_THROTTLE_BODY = {
-	"type ServerThrottleBucket = {\n",
-	"\tCount: number,\n",
-	"\tStarted: number\n",
-	"}\n",
-	"\n",
-	"type ServerThrottle = {\n",
-	"\tLimit: number,\n",
-	"\tPlayers: {[Player]: ServerThrottleBucket}\n",
-	"}\n",
-	"\n",
-	"local ServerThrottles: any = {\n",
-	"\tReliable = table.create(256),\n",
-	"\tUnreliable = table.create(256)\n",
-	"}\n",
-	"\n",
-	"ClearServerThrottles = function(Player: Player)\n",
-	"\tfor _, Channel in ServerThrottles do\n",
-	"\t\tfor _, Throttle in Channel do\n",
-	"\t\t\tThrottle.Players[Player] = nil\n",
-	"\t\tend\n",
-	"\tend\n",
-	"end\n",
-	"\n",
-	"local function CheckServerThrottle(Throttle: ServerThrottle?, Player: Player): boolean\n",
-	"\tif Throttle == nil then\n",
-	"\t\treturn true\n",
-	"\tend\n",
-	"\n",
-	"\tlocal Now = os.clock()\n",
-	"\tlocal Bucket = Throttle.Players[Player]\n",
-	"\tif Bucket == nil or Now - Bucket.Started >= 1 then\n",
-	"\t\tThrottle.Players[Player] = { Count = 1, Started = Now }\n",
-	"\t\treturn true\n",
-	"\tend\n",
-	"\n",
-	"\tBucket.Count += 1\n",
-	"\treturn Bucket.Count <= Throttle.Limit\n",
-	"end\n",
-}
 
 local RELIABLE_BODY = {
 	Header = "local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances",
@@ -192,7 +154,6 @@ local Reliables: Blocks.Block
 local Unreliables: Blocks.Block
 local Return: Builder.Builder
 local Options: Parser.Options
-local HasServerThrottles: boolean
 
 local Generators = {}
 local Declarations = {}
@@ -424,7 +385,6 @@ function Declarations.Event(Declaration: Parser.Event)
 	local IsUnreliable = (Reliability == "Unreliable")
 	local IsPolling = (Value.Call == "Polling" or Options.UsePolling)
 	local IsSameContext = Value.From == Context
-	local IsServerThrottle = Context == "Server" and Value.From == "Client" and Value.ServerThrottle ~= nil
 
 	local Block = IsUnreliable and Unreliables or Reliables
 	local Channel = IsUnreliable and Channels.Unreliable or Channels.Reliable
@@ -432,12 +392,6 @@ function Declarations.Event(Declaration: Parser.Event)
 	local Index = Channel.Count
 	local Queue = `Queue.{Reliability}[{Index}]`
 	local Connection = `Events.{Reliability}[{Index}]`
-	local Throttle = `ServerThrottles.{Reliability}[{Index}]`
-
-	if IsServerThrottle then
-		HasServerThrottles = true
-		Events.Push(`{Throttle} = \{ Limit = {Value.ServerThrottle}, Players = \{\} \}`)
-	end
 
 	--> Data body
 	local Types, Values, Arguments, _ = "nil", "Value: nil", "Value", nil
@@ -502,9 +456,6 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 
 		Block:Line(`local {Values} = {Util.GetPath(Identifier, false, Scope)}()`)
-		local DispatchBlock = if IsServerThrottle
-			then Block:Compare(`CheckServerThrottle({Throttle}, Player)`, "true", "Equals")
-			else Block
 
 		local Disconnect = Blocks.Function("", "", "()")
 		if IsSingle then
@@ -519,12 +470,11 @@ function Declarations.Event(Declaration: Parser.Event)
 		if IsReliable then
 			local ListenerBound: Blocks.Block
 			if IsSingle then
-				ListenerBound = DispatchBlock:Compare(Connection, "nil", "Not")
-					:Lines(CallListener.Content, DispatchBlock.Indent)
+				ListenerBound = Block:Compare(Connection, "nil", "Not"):Lines(CallListener.Content, Block.Indent)
 			else
-				ListenerBound = DispatchBlock:Compare(`#{Connection}`, "0", "Greater")
+				ListenerBound = Block:Compare(`#{Connection}`, "0", "Greater")
 					:Iterator("_", "Listener", Connection)
-					:Lines(CallListener.Content, DispatchBlock.Indent + 1)
+					:Lines(CallListener.Content, Block.Indent + 1)
 					:End()
 			end
 
@@ -547,11 +497,9 @@ function Declarations.Event(Declaration: Parser.Event)
 				:End()
 		else
 			if IsSingle then
-				DispatchBlock:Compare(Connection, "nil", "Not"):Lines(CallListener.Content, DispatchBlock.Indent):End()
+				Block:Compare(Connection, "nil", "Not"):Lines(CallListener.Content, Block.Indent):End()
 			else
-				DispatchBlock:Iterator("_", "Listener", Connection)
-					:Lines(CallListener.Content, DispatchBlock.Indent)
-					:End()
+				Block:Iterator("_", "Listener", Connection):Lines(CallListener.Content, Block.Indent):End()
 			end
 
 			Listener = Blocks.Function(Casing.On, ContextArguments, `() -> ()`, true)
@@ -574,20 +522,9 @@ function Declarations.Event(Declaration: Parser.Event)
 		end
 
 		Channel.Listening = true
-		if IsServerThrottle then
-			Block:Line(`local {Values} = {Util.GetPath(Identifier, false, Scope)}()`)
-			Block:Compare(`CheckServerThrottle({Throttle}, Player)`, "true", "Equals")
-				:Line(`Push({Queue}, table.pack(Player, {Arguments}))`)
-				:End()
-		else
-			Block:Line(
-				`Push({Queue}, table.pack({Context == "Server" and "Player, " or ""}{Util.GetPath(
-					Identifier,
-					false,
-					Scope
-				)}()))`
-			)
-		end
+		Block:Line(
+			`Push({Queue}, table.pack({Context == "Server" and "Player, " or ""}{Util.GetPath(Identifier, false, Scope)}()))`
+		)
 
 		local IterTypes = `number, {Context == "Server" and "Player, " or ""}{Types}`
 
@@ -1325,7 +1262,6 @@ function Generator.Reset()
 	Channels.Unreliable.Count = 0
 	Channels.Reliable.Listening = false
 	Channels.Unreliable.Listening = false
-	HasServerThrottles = false
 end
 
 function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Body): string
@@ -1352,8 +1288,8 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Unreliables = Blocks.Connection(`Unreliable.{Signal}`, Arguments)
 
 	if RemoteTamperCheck then
-		Reliables:Lines(REMOTE_TAMPER_CHECK_BODY, 1)
-		Unreliables:Lines(REMOTE_TAMPER_CHECK_BODY, 1)
+		Reliables:Lines(RELIABLE_REMOTE_TAMPER_CHECK_BODY, 1)
+		Unreliables:Lines(UNRELIABLE_REMOTE_TAMPER_CHECK_BODY, 1)
 	end
 
 	Reliables:Lines(EVENT_BODY, 1)
@@ -1388,7 +1324,7 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	local Replication = Builder.new()
 	if RemoteTamperCheck then
 		Noop.Push("OnRemoteTamperingDetected = function() return NOOP end,", 0, 1)
-		Return.Push("OnRemoteTamperingDetected = OnRemoteTamperingDetected,", 1, 1)
+		Return.Push("OnRemoteTamperingDetected = OnRemoteTamperingDetected,", 0, 1)
 	end
 	Return.Push(`{Casing.StepReplication} = StepReplication,`, 1, 1)
 
@@ -1457,8 +1393,6 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 		string.split(Sources.Base, "\r"),
 		(if Options.SyncValidation then SYNC_VALIDATION_BODY else {}),
 		(if RemoteTamperCheck then REMOTE_TAMPER_BODY else {}),
-		(if Context == "Server" then SERVER_THROTTLE_CLEANUP_DECLARATION else {}),
-		(if HasServerThrottles then SERVER_THROTTLE_BODY else {}),
 		Events.DumpLines(),
 		LuauTypes.DumpLines(),
 		UserTypes.DumpLines(),

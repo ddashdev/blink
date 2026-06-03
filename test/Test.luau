@@ -723,7 +723,24 @@ RunClosure("Server byte limit rejects oversized client buffers", function()
 	end)
 
 	local BeforeWarnings = #Warnings
-	Shared.Bridge:Fire("Client", "BLINK_RELIABLE_REMOTE", buffer.create(12001), {}, nil, nil, nil)
+	Shared.Bridge:Fire(
+		"Client",
+		"BLINK_RELIABLE_REMOTE",
+		buffer.create(99999),
+		{},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil
+	)
 	task.wait(1 / 30)
 	Disconnect()
 
@@ -732,7 +749,7 @@ RunClosure("Server byte limit rejects oversized client buffers", function()
 	end
 
 	local Warning = Warnings[BeforeWarnings + 1]
-	if not Warning or not string.find(Warning, "123456", 1, true) or not string.find(Warning, "12001", 1, true) then
+	if not Warning or not string.find(Warning, "123456", 1, true) or not string.find(Warning, "99999", 1, true) then
 		ErrorPrint(`Expected oversized buffer warning with user id and byte size, got {Format(Warning)}.`)
 	end
 end)
@@ -1091,24 +1108,6 @@ end)
 RunClosure("CLI compile --yes", function()
 	local Result = process.exec("lune", { "run", Compiler, COMPILE_TEST_FILE, "--", "--yes" }, { cwd = "../src/CLI" })
 	assert(Result.ok, Result.stderr)
-end)
-
-RunClosure("ServerThrottle rejects server events", function()
-	local SourceParser = Parser.new()
-	local Success = pcall(function()
-		SourceParser:Parse([[
-event InvalidServerThrottle {
-	From: Server,
-	Type: Reliable,
-	Call: SingleSync,
-	ServerThrottle: 1
-}
-]])
-	end)
-
-	if Success then
-		ErrorPrint("Expected ServerThrottle on a server event to fail.")
-	end
 end)
 
 RunClosure("ServerByteLimit rejects invalid values", function()
