@@ -288,9 +288,7 @@ local GENERICS_TYPES = {
 	TagEnum = true,
 }
 
-local RESERVED = {
-	StepReplication = true,
-}
+local RESERVED = {}
 
 local PRIMITIVES = Settings.Primtives
 local ARRAY_BOUNDS = NumberRange.new(0, (PRIMITIVES.u16.Bounds :: NumberRange).Max)

@@ -24,13 +24,48 @@ if not Unreliable then
 end
 
 local PlayersMap: {[Player]: BufferSave} = {}
+local ReadyPlayers: {[Player]: true?} = {}
+local ReadyPlayerCallbacks: { (Player) -> () } = {}
 
 Players.PlayerRemoving:Connect(function(Player)
     PlayersMap[Player] = nil
+    ReadyPlayers[Player] = nil
 end)
 
+local function MarkPlayerReady(Player: Player)
+    if ReadyPlayers[Player] then
+        return
+    end
+
+    ReadyPlayers[Player] = true
+
+    for _, Callback in ReadyPlayerCallbacks do
+        task.spawn(Callback, Player)
+    end
+end
+
+local function OnNewReadyPlayer(Callback: (Player: Player) -> ()): () -> ()
+    table.insert(ReadyPlayerCallbacks, Callback)
+
+    return function()
+        local Index = table.find(ReadyPlayerCallbacks, Callback)
+        if Index then
+            table.remove(ReadyPlayerCallbacks, Index)
+        end
+    end
+end
+
 local function StepReplication()
+    if not Started then
+        WarnNotStarted("StepReplication")
+        return
+    end
+
     for Player, Send in PlayersMap do
+        if ReadyPlayers[Player] ~= true then
+            continue
+        end
+
         if Send.Cursor <= 0 then
             continue
         end

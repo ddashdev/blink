@@ -115,6 +115,13 @@ local function FireServerArguments(Options: Parser.Options): string
 	return "Buffer, SendInstances"
 end
 
+local function GuardStarted(Block: Blocks.Block, Name: string, ReturnValue: string?): Blocks.Block
+	return Block:Compare("Started", "true", "Not")
+		:Line(`WarnNotStarted("{Name}")`)
+		:Line(`return{ReturnValue and ` {ReturnValue}` or ""}`)
+		:End()
+end
+
 local RELIABLE_BODY = {
 	Header = "local Buffer, Size, Instances = SendBuffer, SendCursor, SendInstances",
 	Body = {
@@ -559,6 +566,7 @@ function Declarations.Event(Declaration: Parser.Event)
 		Body.PushLines(Deprecated.Content, 0, Indent + 1)
 	elseif Context == "Client" then
 		local Fire = Blocks.Function(Casing.Fire, Values, "()", true)
+		GuardStarted(Fire, `{Declaration.Name}.{Casing.Fire}`)
 		if IsReliable then
 			Fire:Line(WriteEvent)
 		else
@@ -576,6 +584,8 @@ function Declarations.Event(Declaration: Parser.Event)
 		Body.PushLines(Fire.Content, 0, Indent + 1)
 	else
 		local Fire = Blocks.Function(Casing.Fire, `Player: Player, {Values}`, "()", true)
+		GuardStarted(Fire, `{Declaration.Name}.{Casing.Fire}`)
+		Fire:Compare("ReadyPlayers[Player]", "true", "Not"):Return(""):End()
 		if IsReliable then
 			Fire:Line("Load(PlayersMap[Player])")
 			Fire:Line(WriteEvent)
@@ -589,39 +599,54 @@ function Declarations.Event(Declaration: Parser.Event)
 		Fire:End()
 
 		local FireAll = Blocks.Function(Casing.FireAll, Values, "()", true)
+		GuardStarted(FireAll, `{Declaration.Name}.{Casing.FireAll}`)
 		if IsReliable then
 			FireAll:Line("Load()")
 			FireAll:Line(WriteEvent)
 			FireAll:Line(RELIABLE_BODY.Header)
-			FireAll:Iterator("_", "Player", "Players:GetPlayers()"):Lines(RELIABLE_BODY.Body, 2):End()
+			FireAll:Iterator("Player", "_", "ReadyPlayers"):Lines(RELIABLE_BODY.Body, 2):End()
 		else
 			FireAll:Line("Load()")
 			FireAll:Line(WriteEvent)
 			FireAll:Lines(UNRELIABLE_BODY, 1)
-			FireAll:Line("Unreliable:FireAllClients(Buffer, SendInstances)")
+			FireAll:Iterator("Player", "_", "ReadyPlayers")
+				:Line("Unreliable:FireClient(Player, Buffer, SendInstances)")
+				:End()
 		end
 		FireAll:End()
 
 		local FireList = Blocks.Function(Casing.FireList, `List: \{Player\}, {Values}`, "()", true)
+		GuardStarted(FireList, `{Declaration.Name}.{Casing.FireList}`)
 		if IsReliable then
 			FireList:Line("Load()")
 			FireList:Line(WriteEvent)
 			FireList:Line(RELIABLE_BODY.Header)
-			FireList:Iterator("_", "Player", "List"):Lines(RELIABLE_BODY.Body, 2):End()
+			FireList:Iterator("_", "Player", "List")
+				:Compare("ReadyPlayers[Player]", "true", "Not")
+				:Line("continue")
+				:End()
+				:Lines(RELIABLE_BODY.Body, 2)
+				:End()
 		else
 			FireList:Line("Load()")
 			FireList:Line(WriteEvent)
 			FireList:Lines(UNRELIABLE_BODY, 1)
-			FireList:Iterator("_", "Player", "List"):Line("Unreliable:FireClient(Player, Buffer, SendInstances)"):End()
+			FireList:Iterator("_", "Player", "List")
+				:Compare("ReadyPlayers[Player]", "true", "Not")
+				:Line("continue")
+				:End()
+				:Line("Unreliable:FireClient(Player, Buffer, SendInstances)")
+				:End()
 		end
 		FireList:End()
 
 		local FireExcept = Blocks.Function(Casing.FireExcept, `Except: Player, {Values}`, "()", true)
+		GuardStarted(FireExcept, `{Declaration.Name}.{Casing.FireExcept}`)
 		if IsReliable then
 			FireExcept:Line("Load()")
 			FireExcept:Line(WriteEvent)
 			FireExcept:Line(RELIABLE_BODY.Header)
-			FireExcept:Iterator("_", "Player", "Players:GetPlayers()")
+			FireExcept:Iterator("Player", "_", "ReadyPlayers")
 				:Compare("Player", "Except", "Equals")
 				:Line("continue")
 				:End()
@@ -631,7 +656,7 @@ function Declarations.Event(Declaration: Parser.Event)
 			FireExcept:Line("Load()")
 			FireExcept:Line(WriteEvent)
 			FireExcept:Lines(UNRELIABLE_BODY, 1)
-			FireExcept:Iterator("_", "Player", "Players:GetPlayers()")
+			FireExcept:Iterator("Player", "_", "ReadyPlayers")
 				:Compare("Player", "Except", "Equals")
 				:Line("continue")
 				:End()
@@ -819,6 +844,7 @@ function Declarations.Function(Declaration: Parser.Function)
 			local Wrapper = Blocks.Function("", ""):Lines(Contents):End():Wrap("return Future.Try(", ")")
 
 			Invoke = Blocks.Function(Casing.Invoke, DataValues, `Future.Future<boolean, {ReturnTypes}>`, true)
+			GuardStarted(Invoke, `{Name}.{Casing.Invoke}`, "nil :: any")
 			Invoke:Lines(Wrapper.Content, 1)
 		elseif IsPromise then
 			local OnCancel =
@@ -840,9 +866,11 @@ function Declarations.Function(Declaration: Parser.Function)
 				:Wrap(`return Promise.new(`, ")")
 
 			Invoke = Blocks.Function(Casing.Invoke, DataValues, nil, true)
+			GuardStarted(Invoke, `{Name}.{Casing.Invoke}`, "nil :: any")
 			Invoke:Lines(Promise.Content, 1)
 		else
 			Invoke = Blocks.Function(Casing.Invoke, DataValues, `({ReturnTypes})`, true)
+			GuardStarted(Invoke, `{Name}.{Casing.Invoke}`, "nil :: any")
 			Invoke:Lines(Contents, 0)
 		end
 
@@ -1271,11 +1299,13 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Context = FileContext
 	Options = AbstractSyntaxTree.Value.Options
 	Casing = Settings.GetCasing((Options.Casing :: Settings.Case) or "Pascal")
+	Channels.Reliable.Count = if Context == "Shared" then 0 else 1
 
 	--> Setup noop
 	Noop.Push(`if not RunService:IsRunning() then`)
 	Noop.Push(`local NOOP = function() end`, 0, 1)
 	Noop.Push(`local Returns = table.freeze(\{`, 0, 1)
+	Noop.Push(`{Casing.Start} = NOOP,`, 0, 1)
 
 	--> Setup remote events
 	local Signal = Context == "Client" and "OnClientEvent" or "OnServerEvent"
@@ -1311,6 +1341,17 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Types.u8.Read("Index", Reliables)
 	Types.u8.Read("Index", Unreliables)
 
+	if Context == "Server" then
+		Reliables = Reliables:Compare("Index", "0", "Equals")
+			:Line("MarkPlayerReady(Player)")
+			:Line("continue")
+			:Branch("Conditional", "ReadyPlayers[Player]", "true", "Not")
+			:Line("return")
+		Unreliables = Unreliables:Compare("ReadyPlayers[Player]", "true", "Not"):Line("return")
+		Channels.Reliable.Listening = true
+		Channels.Unreliable.Listening = true
+	end
+
 	--> Import async libraries
 	if Options.FutureLibrary then
 		Imports.Push(`local Future = require({Options.FutureLibrary})`)
@@ -1326,10 +1367,15 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 		Noop.Push("OnRemoteTamperingDetected = function() return NOOP end,", 0, 1)
 		Return.Push("OnRemoteTamperingDetected = OnRemoteTamperingDetected,", 0, 1)
 	end
+	if Context == "Server" then
+		Noop.Push(`{Casing.OnNewReadyPlayer} = function() return NOOP end,`, 0, 1)
+		Return.Push(`{Casing.OnNewReadyPlayer} = OnNewReadyPlayer,`, 0, 1)
+	end
+	Return.Push(`{Casing.Start} = Start,`, 0, 1)
 	Return.Push(`{Casing.StepReplication} = StepReplication,`, 1, 1)
 
 	if not Options.ManualReplication then
-		Replication.Push("RunService.Heartbeat:Connect(StepReplication)")
+		Replication.Push("RunService.Heartbeat:Connect(StepReplication)", 0, 1)
 	end
 
 	--> Parse declarations
@@ -1357,7 +1403,24 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Reliables = Reliables:End():End()
 	Unreliables = Unreliables:End():End()
 
-	Noop.Push(`Exports = table.freeze(\{`, 0, 1)
+	local Start = Builder.new()
+	Start.Push(`local function Start()`)
+	Start.Push("if Started then", 0, 1)
+	Start.Push("return", 0, 2)
+	Start.Push("end", 0, 1)
+	Start.Push("Started = true", 0, 1)
+	if Context == "Client" then
+		Start.Push("Load()", 0, 1)
+		Start.Push("local Position = Allocate(1)", 0, 1)
+		Start.Push("buffer.writeu8(SendBuffer, Position, 0)", 0, 1)
+		Start.Push("StepReplication()", 0, 1)
+	end
+	Start.PushLines(Replication.DumpLines(), 0, 0)
+	Start.PushLines(Reliables.Content, 0, 1)
+	Start.PushLines(Unreliables.Content, 0, 1)
+	Start.Push("end")
+
+	Noop.Push(`{Casing.Exports} = table.freeze(\{`, 0, 1)
 	Noop.PushLines(NoopExports.DumpLines(), 0, 1)
 	Noop.Push(`}),`, 0, 1)
 	Noop.Push(`\})`, 0, 1)
@@ -1365,7 +1428,7 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Noop.Push(`end`, 0, 0)
 
 	Return.PushFront(`\nlocal Returns = table.freeze(\{`)
-	Return.Push(`Exports = table.freeze(\{`, 0, 1)
+	Return.Push(`{Casing.Exports} = table.freeze(\{`, 0, 1)
 	Return.PushLines(UserExports.DumpLines(), 0, 1)
 	Return.Push(`}),`, 0, 1)
 	Return.Push(`})`)
@@ -1398,9 +1461,7 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 		UserTypes.DumpLines(),
 		Noop.DumpLines(),
 		string.split(SourceEnd, "\r"),
-		Replication.DumpLines(),
-		Reliables.Content,
-		Unreliables.Content,
+		Start.DumpLines(),
 		Return.DumpLines(),
 		{ `type {EVENTS_TYPE} = typeof(Returns)\n`, `return Returns :: {EVENTS_TYPE}` }
 	)
@@ -1430,7 +1491,7 @@ function Generator.GenerateShared(AbstractSyntaxTree: Parser.Body): string
 		string.split(Source[2], "\r"),
 		{ "\n" },
 		{ `\nreturn \{\n` },
-		{ `\tExports = table.freeze(\{\n` },
+		{ `\t{Casing.Exports} = table.freeze(\{\n` },
 		UserExports.DumpLines(),
 		{ `\t}),\n` },
 		{ "\n}" }

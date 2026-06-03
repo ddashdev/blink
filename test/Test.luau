@@ -1,4 +1,5 @@
 local Format = require("../src/Modules/Format")
+local Generator = require("../src/Generator")
 local Parser = require("../src/Parser")
 local fs = require("@lune/fs")
 local luau = require("@lune/luau")
@@ -660,6 +661,58 @@ local InstanceNeverIsA = setmetatable({
 	end,
 })
 
+RunClosure("Pre-Start sends are dropped", function()
+	local BeforeWarnings = #Warnings
+
+	ClientExports.ReliableClient.Fire(1)
+	ServerExports.ReliableServer.FireAll(1)
+
+	local Result = ClientExports.RemoteFunction.Invoke(1)
+	if Result ~= nil then
+		ErrorPrint(`Expected pre-Start invoke to return nil, got {Format(Result)}.`)
+	end
+
+	if #Warnings < BeforeWarnings + 3 then
+		ErrorPrint("Expected pre-Start fire and invoke warnings.")
+	end
+end)
+
+RunClosure("Start marks client ready", function()
+	local ReadyCount = 0
+	local ReadyPlayer = nil
+	local ClientReliableIndexes = {}
+
+	local DisconnectReady = Server.OnNewReadyPlayer(function(Player)
+		ReadyCount += 1
+		ReadyPlayer = Player
+	end)
+	local BridgeConnection = Shared.Bridge:Connect(function(From: string, Remote: string, Buffer: buffer)
+		if From == "Client" and Remote == "BLINK_RELIABLE_REMOTE" then
+			table.insert(ClientReliableIndexes, buffer.readu8(Buffer, 0))
+		end
+	end)
+
+	if ClientExports.ClientReady ~= nil or ServerExports.ClientReady ~= nil then
+		ErrorPrint("Expected ClientReady to stay internal.")
+	end
+
+	Server.Start()
+	Client.Start()
+	Client.Start()
+
+	task.wait(1 / 30)
+	DisconnectReady()
+	BridgeConnection:Disconnect()
+
+	if ReadyCount ~= 1 or ReadyPlayer ~= Shared.Player then
+		ErrorPrint(`Expected one ready callback for Player, got count {ReadyCount} and player {Format(ReadyPlayer)}.`)
+	end
+
+	if ClientReliableIndexes[1] ~= 0 then
+		ErrorPrint(`Expected ClientReady id 0 as first client reliable packet, got {Format(ClientReliableIndexes)}.`)
+	end
+end)
+
 local Example: Client.Example = {
 	Field = 0,
 	Float16Field = 0,
@@ -1120,6 +1173,22 @@ RunClosure("ServerByteLimit rejects invalid values", function()
 		if Success then
 			ErrorPrint(`Expected ServerByteLimit = {Limit} to fail.`)
 		end
+	end
+end)
+
+RunClosure("Exports respects casing option", function()
+	local SourceParser = Parser.new("./Sources/", "Polling.blink")
+	local AbstractSyntaxTree = SourceParser:Parse(fs.readFile("./Sources/Polling.blink"))
+
+	local ClientSource = Generator.Generate("Client", AbstractSyntaxTree)
+	local ClientTypes = Generator.GenerateTypescript("Client", AbstractSyntaxTree)
+
+	if string.find(ClientSource, "\n\texports = table.freeze({", 1, true) == nil then
+		ErrorPrint("Expected snake/camel casing to emit root `exports` in Luau.")
+	end
+
+	if string.find(ClientTypes, "export declare const exports: {", 1, true) == nil then
+		ErrorPrint("Expected snake/camel casing to emit root `exports` in TypeScript.")
 	end
 end)
 

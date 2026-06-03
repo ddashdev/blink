@@ -329,7 +329,13 @@ return function(FileContext: Context, AbstractSyntaxTree: AbstractSyntaxTree): s
 			`export declare const OnRemoteTamperingDetected: (Callback: (Player: Player) => void) => (() => void)`
 		)
 	end
+	StringBuilder.Push(`export declare const {Casing.Start}: () => void`)
 	StringBuilder.Push(`export declare const {Casing.StepReplication}: () => void`)
+	if FileContext == "Server" then
+		StringBuilder.Push(
+			`export declare const {Casing.OnNewReadyPlayer}: (Callback: (Player: Player) => void) => (() => void)`
+		)
+	end
 
 	if _G.VERSION == nil then
 		StringBuilder.Push(TESTING_HEADER)
@@ -348,7 +354,7 @@ return function(FileContext: Context, AbstractSyntaxTree: AbstractSyntaxTree): s
 
 	Generators.Tree(State, AbstractSyntaxTree.Value.Declarations)
 
-	StringBuilder.Push(`export declare const Exports: \{`)
+	StringBuilder.Push(`export declare const {Casing.Exports}: \{`)
 	StringBuilder.PushLines(ExportsBuilder.DumpLines())
 	StringBuilder.Push(`\}`)
 

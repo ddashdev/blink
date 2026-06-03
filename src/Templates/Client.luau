@@ -10,6 +10,11 @@ local Reliable: RemoteEvent = ReplicatedStorage:WaitForChild(BASE_EVENT_NAME .. 
 local Unreliable: UnreliableRemoteEvent = ReplicatedStorage:WaitForChild(BASE_EVENT_NAME .. "_UNRELIABLE_REMOTE") :: UnreliableRemoteEvent
 
 local function StepReplication()
+    if not Started then
+        WarnNotStarted("StepReplication")
+        return
+    end
+
     if SendCursor <= 0 then
         return
     end

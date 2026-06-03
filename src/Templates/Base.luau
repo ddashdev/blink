@@ -1,4 +1,6 @@
 return [[local Invocations = 0
+local Started = false
+local PreStartWarnings = {}
 
 local SendSize = 64
 local SendOffset = 0
@@ -71,6 +73,15 @@ local function Invoke()
     local Invocation = Invocations
     Invocations += 1
     return Invocation
+end
+
+local function WarnNotStarted(Name: string)
+    if PreStartWarnings[Name] then
+        return
+    end
+
+    PreStartWarnings[Name] = true
+    warn(`[Blink]: "{Name}" was called before Start(); packet dropped.`)
 end
 
 local function Allocate(Bytes: number)
