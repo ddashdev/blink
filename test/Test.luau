@@ -681,10 +681,22 @@ RunClosure("Start marks client ready", function()
 	local ReadyCount = 0
 	local ReadyPlayer = nil
 	local ClientReliableIndexes = {}
+	local ClientStartedCount = 0
+	local ServerStartedCount = 0
+	local DisconnectedStartedCount = 0
 
 	local DisconnectReady = Server.OnNewReadyPlayer(function(Player)
 		ReadyCount += 1
 		ReadyPlayer = Player
+	end)
+	local DisconnectClientStarted = Client.OnStarted(function()
+		ClientStartedCount += 1
+	end)
+	local DisconnectServerStarted = Server.OnStarted(function()
+		ServerStartedCount += 1
+	end)
+	local DisconnectBeforeStart = Client.OnStarted(function()
+		DisconnectedStartedCount += 1
 	end)
 	local BridgeConnection = Shared.Bridge:Connect(function(From: string, Remote: string, Buffer: buffer)
 		if From == "Client" and Remote == "BLINK_RELIABLE_REMOTE" then
@@ -696,16 +708,29 @@ RunClosure("Start marks client ready", function()
 		ErrorPrint("Expected ClientReady to stay internal.")
 	end
 
+	DisconnectBeforeStart()
 	Server.Start()
 	Client.Start()
 	Client.Start()
 
+	Client.OnStarted(function()
+		ClientStartedCount += 1
+	end)
+
 	task.wait(1 / 30)
 	DisconnectReady()
+	DisconnectClientStarted()
+	DisconnectServerStarted()
 	BridgeConnection:Disconnect()
 
 	if ReadyCount ~= 1 or ReadyPlayer ~= Shared.Player then
 		ErrorPrint(`Expected one ready callback for Player, got count {ReadyCount} and player {Format(ReadyPlayer)}.`)
+	end
+
+	if ClientStartedCount ~= 2 or ServerStartedCount ~= 1 or DisconnectedStartedCount ~= 0 then
+		ErrorPrint(
+			`Expected OnStarted callbacks (client=2, server=1, disconnected=0), got client={ClientStartedCount}, server={ServerStartedCount}, disconnected={DisconnectedStartedCount}.`
+		)
 	end
 
 	if ClientReliableIndexes[1] ~= 0 then
@@ -1189,6 +1214,10 @@ RunClosure("Exports respects casing option", function()
 
 	if string.find(ClientTypes, "export declare const exports: {", 1, true) == nil then
 		ErrorPrint("Expected snake/camel casing to emit root `exports` in TypeScript.")
+	end
+
+	if string.find(ClientTypes, "export declare const on_started:", 1, true) == nil then
+		ErrorPrint("Expected snake casing to emit root `on_started` in TypeScript.")
 	end
 end)
 

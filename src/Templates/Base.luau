@@ -1,6 +1,7 @@
 return [[local Invocations = 0
 local Started = false
 local PreStartWarnings = {}
+local StartedCallbacks: { () -> () } = {}
 
 local SendSize = 64
 local SendOffset = 0
@@ -82,6 +83,31 @@ local function WarnNotStarted(Name: string)
 
     PreStartWarnings[Name] = true
     warn(`[Blink]: "{Name}" was called before Start(); packet dropped.`)
+end
+
+local function RunStartedCallbacks()
+    local Callbacks = StartedCallbacks
+    StartedCallbacks = {}
+
+    for _, Callback in Callbacks do
+        task.spawn(Callback)
+    end
+end
+
+local function OnStarted(Callback: () -> ()): () -> ()
+    if Started then
+        task.spawn(Callback)
+        return function() end
+    end
+
+    table.insert(StartedCallbacks, Callback)
+
+    return function()
+        local Index = table.find(StartedCallbacks, Callback)
+        if Index then
+            table.remove(StartedCallbacks, Index)
+        end
+    end
 end
 
 local function Allocate(Bytes: number)

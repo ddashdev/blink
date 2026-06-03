@@ -1306,6 +1306,7 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Noop.Push(`local NOOP = function() end`, 0, 1)
 	Noop.Push(`local Returns = table.freeze(\{`, 0, 1)
 	Noop.Push(`{Casing.Start} = NOOP,`, 0, 1)
+	Noop.Push(`{Casing.OnStarted} = function() return NOOP end,`, 0, 1)
 
 	--> Setup remote events
 	local Signal = Context == "Client" and "OnClientEvent" or "OnServerEvent"
@@ -1371,6 +1372,7 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 		Noop.Push(`{Casing.OnNewReadyPlayer} = function() return NOOP end,`, 0, 1)
 		Return.Push(`{Casing.OnNewReadyPlayer} = OnNewReadyPlayer,`, 0, 1)
 	end
+	Return.Push(`{Casing.OnStarted} = OnStarted,`, 0, 1)
 	Return.Push(`{Casing.Start} = Start,`, 0, 1)
 	Return.Push(`{Casing.StepReplication} = StepReplication,`, 1, 1)
 
@@ -1418,6 +1420,7 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	Start.PushLines(Replication.DumpLines(), 0, 0)
 	Start.PushLines(Reliables.Content, 0, 1)
 	Start.PushLines(Unreliables.Content, 0, 1)
+	Start.Push("RunStartedCallbacks()", 0, 1)
 	Start.Push("end")
 
 	Noop.Push(`{Casing.Exports} = table.freeze(\{`, 0, 1)

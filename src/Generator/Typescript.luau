@@ -330,6 +330,7 @@ return function(FileContext: Context, AbstractSyntaxTree: AbstractSyntaxTree): s
 		)
 	end
 	StringBuilder.Push(`export declare const {Casing.Start}: () => void`)
+	StringBuilder.Push(`export declare const {Casing.OnStarted}: (Callback: () => void) => (() => void)`)
 	StringBuilder.Push(`export declare const {Casing.StepReplication}: () => void`)
 	if FileContext == "Server" then
 		StringBuilder.Push(
