@@ -708,6 +708,10 @@ RunClosure("Start marks client ready", function()
 		ErrorPrint("Expected ClientReady to stay internal.")
 	end
 
+	if Server.IsNetReady(Shared.Player) then
+		ErrorPrint("Expected player to be not ready before ClientReady.")
+	end
+
 	DisconnectBeforeStart()
 	Server.Start()
 	Client.Start()
@@ -725,6 +729,10 @@ RunClosure("Start marks client ready", function()
 
 	if ReadyCount ~= 1 or ReadyPlayer ~= Shared.Player then
 		ErrorPrint(`Expected one ready callback for Player, got count {ReadyCount} and player {Format(ReadyPlayer)}.`)
+	end
+
+	if not Server.IsNetReady(Shared.Player) then
+		ErrorPrint("Expected player to be ready after ClientReady.")
 	end
 
 	if ClientStartedCount ~= 2 or ServerStartedCount ~= 1 or DisconnectedStartedCount ~= 0 then
@@ -1218,6 +1226,11 @@ RunClosure("Exports respects casing option", function()
 
 	if string.find(ClientTypes, "export declare const on_started:", 1, true) == nil then
 		ErrorPrint("Expected snake casing to emit root `on_started` in TypeScript.")
+	end
+
+	local ServerTypes = Generator.GenerateTypescript("Server", AbstractSyntaxTree)
+	if string.find(ServerTypes, "export declare const is_net_ready:", 1, true) == nil then
+		ErrorPrint("Expected snake casing to emit root `is_net_ready` in TypeScript.")
 	end
 end)
 

@@ -1370,7 +1370,9 @@ function Generator.Generate(FileContext: Context, AbstractSyntaxTree: Parser.Bod
 	end
 	if Context == "Server" then
 		Noop.Push(`{Casing.OnNewReadyPlayer} = function() return NOOP end,`, 0, 1)
+		Noop.Push(`{Casing.IsNetReady} = function() return false end,`, 0, 1)
 		Return.Push(`{Casing.OnNewReadyPlayer} = OnNewReadyPlayer,`, 0, 1)
+		Return.Push(`{Casing.IsNetReady} = IsNetReady,`, 0, 1)
 	end
 	Return.Push(`{Casing.OnStarted} = OnStarted,`, 0, 1)
 	Return.Push(`{Casing.Start} = Start,`, 0, 1)

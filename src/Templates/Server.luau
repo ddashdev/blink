@@ -55,6 +55,10 @@ local function OnNewReadyPlayer(Callback: (Player: Player) -> ()): () -> ()
     end
 end
 
+local function IsNetReady(Player: Player): boolean
+    return ReadyPlayers[Player] == true
+end
+
 local function StepReplication()
     if not Started then
         WarnNotStarted("StepReplication")

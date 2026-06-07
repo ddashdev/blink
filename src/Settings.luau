@@ -21,6 +21,7 @@ export type Cases = {
 	OnStarted: string,
 	StepReplication: string,
 	OnNewReadyPlayer: string,
+	IsNetReady: string,
 	OnRemoteTamperingDetected: string,
 	Next: string,
 	Iter: string,
@@ -55,6 +56,7 @@ local Cases = {
 	FireExcept = { "FireExcept", "fireExcept", "fire_except" },
 	StepReplication = { "StepReplication", "stepReplication", "step_replication" },
 	OnNewReadyPlayer = { "OnNewReadyPlayer", "onNewReadyPlayer", "on_new_ready_player" },
+	IsNetReady = { "IsNetReady", "isNetReady", "is_net_ready" },
 	OnRemoteTamperingDetected = {
 		"OnRemoteTamperingDetected",
 		"onRemoteTamperingDetected",

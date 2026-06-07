@@ -336,6 +336,7 @@ return function(FileContext: Context, AbstractSyntaxTree: AbstractSyntaxTree): s
 		StringBuilder.Push(
 			`export declare const {Casing.OnNewReadyPlayer}: (Callback: (Player: Player) => void) => (() => void)`
 		)
+		StringBuilder.Push(`export declare const {Casing.IsNetReady}: (Player: Player) => boolean`)
 	end
 
 	if _G.VERSION == nil then
